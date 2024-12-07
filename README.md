@@ -66,19 +66,19 @@ Citation for using Representative period algorithm (source paper): **Soares, C.C
 
 * Snippet of the GUI startup
 
-![image](https://github.com/user-attachments/assets/ca4949ca-86c1-466a-9949-5e1c9cba6819)
+![Startup_GUI](https://github.com/user-attachments/assets/0e070b96-c9b1-4ff3-81c4-80b23c6271bc)
 
 * Snippet of the Representative period module
 
-![image](https://github.com/user-attachments/assets/4534caf5-8bcd-4ae9-9392-0d53e27bc72d)
+![RPI_module_GUI](https://github.com/user-attachments/assets/f1b3c0b7-c6d9-4140-b3b6-cbdb8a8c5af4)
 
 * Snippet of the Wind file generator- COSMO REA6
 
-![image](https://github.com/user-attachments/assets/f41fb0c2-ae4f-44e0-9c3d-5e76f8319919)
+![COSMO_GUI](https://github.com/user-attachments/assets/978632dd-5e57-4648-af9e-244afd53cabc)
 
 * Snippet of water and wave time series file generator module using EasyGSH
 
-![image](https://github.com/user-attachments/assets/73297c70-298d-4f19-82f8-7bb65148b4f8)
+![Process_allfiles_GUI](https://github.com/user-attachments/assets/0a22c74f-dbb6-45f9-919b-3f39449277a4)
 
 ### Information about the BCW file
 
