@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+title: RepD3D: A tool for representative period identification and associated boundary condition extraction
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: Software
+authors:
+  - given-names: Clayton Cyril
+    family-names: Soares
+    email: clayton.soares@ifg.uni-kiel.de
+    orcid: 'https://orcid.org/0000-0001-6780-2305'
+    affiliation: 'CAU, Kiel'
+  - given-names: Arne
+    family-names: Knies
+    email: arne.knies@ifg.uni-kiel.de
+    affiliation: 'CAU, Kiel'
+  - given-names: Christian
+    family-names: Winter
+    email: christian.winter@ifg.uni-kiel.de
+    affiliation: 'CAU, Kiel'
+identifiers:
+  - type: URL
+    value: >-
+      https://github.com/capt-clay10/RepD3D.git
+abstract: >-
+•	RepD3D is a precompiled tool for Windows, designed to identify wind-based unfiltered and reduced representative periods, and extract associated boundary conditions for modeling studies.
+•	A modified version of the all-class correlation method, known as selective-class correlation, is introduced to identify representative periods specific to user-desired wind speeds and directions. 
+•	Boundary conditions for German North Sea datasets (EasyGSH) and Europe-wide COSMO REA6 are extracted and converted to Delft3D-4 readable input files.
+keywords:
+  - EasyGSH
+  - COSMO REA6
+  - Delft3D4
+  - Representative period
+license: MIT
+date-released: '2024-12-15'
