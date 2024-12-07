@@ -44,6 +44,7 @@ Citation for using Representative period algorithm (source paper): **Soares, C.C
 * os
 * pandas
 * pyproj
+* re
 * requests
 * sci-kit-learn
 * scipy
