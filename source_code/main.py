@@ -209,7 +209,7 @@ if __name__ == '__main__':
 
         t_2 = time.time()
 
-        # %% end the time counter
+        # end the time counter
         print('.')
         print('The process of extracting water level has now completed in : ')
         elapsed = time.time() - t
@@ -229,7 +229,7 @@ if __name__ == '__main__':
         print('.')
         print('.')
         print('.')
-        # %% Write the new mdw file
+        # Write the new mdw file
         mdw_writer.write_mdw_file(
             mdw_file=mdw_file, boundaries_wave=boundaries_wave)
         print('New mdw file created')
@@ -237,7 +237,7 @@ if __name__ == '__main__':
         elapsed_final = time.time() - t
         print(f'Total time taken for both files is {elapsed_final/60} mins')
 
-     # %% CHOICE 3 for bct overlapping years
+     # %% CHOICE 2 for bct overlapping years
     elif choice == 2:
         grid_req = input('Enter name of the Flow grid file : ')
         grid_input = grid_req
@@ -299,7 +299,7 @@ if __name__ == '__main__':
         elapsed = time.time() - t
         print(str(elapsed) + " sec - 3 of 3")
 
-    # %% Choice 5 for overlapping bcw file
+    # %% Choice 3 for overlapping bcw file
     elif choice == 3:
         # BCW section input files
         grid_wave_req = input('Enter name of the Wave grid file : ')
@@ -382,7 +382,7 @@ if __name__ == '__main__':
         mdw_writer.write_mdw_file(
             mdw_file=mdw_file, boundaries_wave=boundaries_wave)
         print('New mdw file created')
-    # %% CHOICE 6 make boundary csv file
+    # %% CHOICE 4 make boundary csv file
     elif choice == 4:
         grid_req = input('Enter name of the grid file : ')
         grid_input = grid_req
@@ -418,7 +418,7 @@ if __name__ == '__main__':
         print('The process of creating',
               ' the boundary location csv file is completed - 2 of 2')
 
-    # %% Write boundary csv and mdw file
+    #  Write boundary csv and mdw file
     elif choice == 5:
         grid_req = input('Enter name of the grid file : ')
         grid_input = grid_req
@@ -555,6 +555,7 @@ if __name__ == '__main__':
         print("""
                 \nThe main path containing the COSMO files should be structured as such\n\nTWO folders in the main path\n\nFolder 1 should be named UV and should have all the U and V monthly cosmo files you wish to extract from.
                 \nFolder 2 should be named PS and should have all the PS monthly files.
+                \nMake sure auxilary file cosmo_latlon_rot.grb is in the main path
                 \nThe COSMO files can be found at:
                 \nhttps://opendata.dwd.de/climate_environment/REA/COSMO_REA6/hourly/2D/ 
                 \nOn the webpage look for PS, U_10M and V_10M and download all monthly files necesssary and unzip them - use 7-Zip. Delete the zip files before generating the wind field files.
