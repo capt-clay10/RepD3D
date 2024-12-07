@@ -63,7 +63,7 @@ Citation for using Representative period algorithm (source paper): **Soares, C.C
 * Opportunity to create synthetic boundary conditions
 
 
-### Two choices are presented, you can run the <ins>main.py</ins> script in your Python environment to extract your files or use the standalone GUI <ins>RepD3d.exe</ins>, alternatively, the gui_generator.py script is also provided in case you want to make changes to the source code and make a new GUI. Pyinstaller or Auto-py-to-exe can convert the <ins>gui_imporved.py</ins> to the executable GUI EasyD3d. 
+### Two choices are presented, you can run the <ins>main.py</ins> script in your Python environment to extract your files or use the standalone GUI <ins>RepD3d.exe</ins>. Alternatively, the gui_generator.py script is also provided in case you want to change the source code and make a new GUI. Pyinstaller or Auto-py-to-exe can convert the <ins>gui_generator.py</ins> to the executable GUI RepD3d. 
 
 * Snippet of the GUI startup
 
@@ -83,7 +83,7 @@ Citation for using Representative period algorithm (source paper): **Soares, C.C
 
 ### Information about the BCW file
 
-**An important thing to note is that this code replicates the file format for a SWAN wave model with uniform wave boundary conditions along one boundary line for multiple time points. so essentially if you make several boundaries one can create a space and time-varying effect. Disclaimer: read the manual**
+**An important thing to note is that this code replicates the file format for a SWAN wave model with uniform wave boundary conditions along one boundary line for multiple time points. so essentially, if you make several boundaries, one can create a space and time-varying effect. Disclaimer: read the manual**
 **Inserting just the Cosmo Meteofiles also achieves good wave results**
 
 **The direction is between 0-360, in the nautical convention**
