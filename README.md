@@ -1,4 +1,4 @@
-# ![Logo](https://github.com/user-attachments/assets/739c15b8-80f5-4ccf-8408-5043785f9481) 
+![repd3d_logo](https://github.com/user-attachments/assets/b1de47b1-be95-4b24-98d8-cc44c64f2e5a)
 # RepD3D: A tool for representative period identification and associated boundary condition extraction
 
 
