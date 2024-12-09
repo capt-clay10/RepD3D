@@ -25,8 +25,28 @@ if __name__ == '__main__':
     t = time.time()  # start the time counter
 
     # %% Input data process 1
+    print("""
+          -----------------------------------------------------------------
+          """)
+          
+    
+    print("""
+          RepD3D - toolbox for representative period identification and 
+          associated boundary condition extraction
+          Created by Clayton Soares
+          Co-developer : Arne Knies
+          Source: https://github.com/capt-clay10/RepD3D.git
+          """)
+    
+    
+    print("""
+          -----------------------------------------------------------------
+          """)
+    
+    
+    
     path_req = input(
-        'Enter the input/output path here (w/o quotation marks), eg E:/extract_bc : ')
+        '\n\nEnter the input/output path here (w/o quotation marks), eg E:/extract_bc : ')
     path = path_req  # 'F:/test'
     os.chdir(path)
 

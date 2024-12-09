@@ -50,7 +50,7 @@ def show_splash(app, resource_path):
     splash.after(3500, close_splash)
     splash.mainloop()
 
-# %% Defien application
+# %% Define application
 class Application(tk.Tk):
     def toggle_fullscreen(event=None):
         app.attributes("-fullscreen", True)
@@ -186,7 +186,7 @@ class Application(tk.Tk):
         elif selected_choice == 0:
             messagebox.showwarning(
                 "Warning", "Please select a file type before submitting.")
-        elif selected_choice in [1, 2, 3, 4, 5, 6, 7, 8, 9]:
+        elif selected_choice in [1, 2, 3, 4, 5, 6, 7, 8]:
             t = time.time()  # start the time counter
 
             new_window = tk.Toplevel(self)
@@ -271,6 +271,7 @@ class Application(tk.Tk):
 
                 elif selected_choice == 7:
                     self.add_sea_level(main_frame)
+                    
                 elif selected_choice == 8:
                     self.generate_wind_files(main_frame)
 
@@ -1494,7 +1495,6 @@ class Application(tk.Tk):
 
         frameup = tk.Frame(main_frame, width=250, borderwidth=1, relief='solid')
         frameup.pack(side='right', fill='both', expand=True, padx=10)
-        t = time.time()
         # Function to browse for files
 
         def browse_file(entry_widget):
