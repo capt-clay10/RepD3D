@@ -1733,7 +1733,7 @@ class Application(tk.Tk):
             entry_widget.delete(0, "end")
             entry_widget.insert(0, file_path)
             
-        grid_ed_path = tk.Label(framedown, text="\nDelft3d Equidistant grid (6km resolution) as .mat:\neg: GNS_6km.mat",
+        grid_ed_path = tk.Label(framedown, text="\nDelft3d Equidistant grid (6km resolution) as .mat (V7)):\neg: Delft3D_grid_6x6.mat",
                                          font='Times').pack(pady=5)
         grid_ed_path_entry = tk.Entry(framedown, width=50)
         grid_ed_path_entry.pack()
@@ -1757,7 +1757,7 @@ class Application(tk.Tk):
         \nThe main path containing the COSMO files should be structured as follows:\n\nFolder 1 should be named UV and should have all the U and V monthly cosmo grib files you wish to extract from.
         \nFolder 2 should be named PS and should have all the PS monthly grib files.
         \nThe reference time should be the same as your model reference date. However it is better to have the real COSMO data start a little after the reference date, preferable download data from a month later so if your reference date is 2001-01-01 00:00:00 then cosmo data should start from 2001-02-01 00:00:00
-        \nProvide an equidistant 6X6 km grid, extracted from Delft3D in .mat format
+        \nProvide an equidistant 6X6 km grid, extracted from Delft3D in .mat (V7) format
         \nIn the current RepD3D version the components are rotated to true North
         \n Output files are .amu, .amv, .amp, .xwind and .ywind
         """

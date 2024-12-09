@@ -615,10 +615,10 @@ if __name__ == '__main__':
                 \nThe COSMO files can be found at:
                 \nhttps://opendata.dwd.de/climate_environment/REA/COSMO_REA6/hourly/2D/ 
                 \nOn the webpage look for PS, U_10M and V_10M and download all monthly files necesssary and unzip them - use 7-Zip. Delete the zip files before generating the wind field files.
-                \n In the current RepD3D version the components are rotated to true North (UTM)
+                \n In the current RepD3D version the components are rotated to true North
                 """)
 
-        print('\n\nPlease make sure the auxillary files, your equidistant 6X6 delft grid(.mat) and cosmo_latlon_rot.grb are in the main path as the cosmo folders UV and PS.')
+        print('\n\nPlease make sure the auxillary files, your equidistant 6X6 delft grid(.mat (V7)) and cosmo_latlon_rot.grb are in the main path as the cosmo folders UV and PS.')
         print('\nThey should be outside the UV and PS folders.')
         
         print("""
