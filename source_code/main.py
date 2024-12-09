@@ -33,6 +33,7 @@ if __name__ == '__main__':
     print("""
           RepD3D - toolbox for representative period identification and 
           associated boundary condition extraction
+          
           Created by Clayton Soares
           Co-developer : Arne Knies
           Source: https://github.com/capt-clay10/RepD3D.git
@@ -69,7 +70,7 @@ if __name__ == '__main__':
           'For adding sea level change to .bct files, type 6',
           'For identifying Representative period, type 7',
           'For generating COSMO wind field files, type 8', sep='\n')
-    print('Important information : for choice 1 , boundary files cannot be generated with overlapping input years')
+    print('\nImportant information : for choice 1 , boundary files cannot be generated with overlapping input years')
     
     print("""
           --------------------------------NOTE-----------------------------
@@ -536,7 +537,6 @@ if __name__ == '__main__':
         print("Important note, the file should have only 3 columns, in the following order date, speed, dir")
         print("Important note, the file should be comma separated (,)")
         print("First row should be column headers")
-        print('\n\n')
 
         print("""
               --------------------------------NOTE-----------------------------
