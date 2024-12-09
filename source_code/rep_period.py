@@ -569,7 +569,7 @@ def identify_rep_period(file_input, output_name, quad, spd, start_time_total, en
 
     list = frequency  # Window of search
 
-    for ff in tqdm(list, desc='Finding rep period per frequency',
+    for ff in tqdm(list, desc='Finding rep period per window',
                    total=len(list), leave=True, mininterval=0.1):
         t_in = time.time()
         time_freq = ff

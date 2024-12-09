@@ -33,6 +33,10 @@ if __name__ == '__main__':
     print('.')
     print('.')
     print('.')
+    
+    print("""
+          --------------------------------NOTE-----------------------------
+          """)
     print("Please read carefully the input criteria",
           "and choose which file you would like")
     print()
@@ -45,8 +49,11 @@ if __name__ == '__main__':
           'For adding sea level change to .bct files, type 6',
           'For identifying Representative period, type 7',
           'For generating COSMO wind field files, type 8', sep='\n')
-    print()
     print('Important information : for choice 1 , boundary files cannot be generated with overlapping input years')
+    
+    print("""
+          --------------------------------NOTE-----------------------------
+          """)
     print()
     req = input("Enter number : ")
     print('.')
@@ -69,9 +76,17 @@ if __name__ == '__main__':
                     # else:
                         # print('{} is not in the file'.format(string_name))
             return string_val
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
 
         print("Please read carefully the input criteria,",
               "some requests are for the wave grid while some for flow\nPlease use file extensions for Delft3D files")
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
 
         grid_req = input('Enter name of the Flow grid file : ')
         grid_input = grid_req
@@ -493,24 +508,40 @@ if __name__ == '__main__':
             converted_list = ast.literal_eval(input_str)
             if isinstance(converted_list, list):
                 return converted_list
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
 
         print("Important note, the file should have only 3 columns, in the following order date, speed, dir")
         print("Important note, the file should be comma separated (,)")
         print("First row should be column headers")
         print('\n\n')
 
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
+              
         file_input = input(
-            'Enter file name of the wind data (w/o quotation marks), eg helgoland_wind.txt : ')
+            'Enter file name of the wind data (w/o quotation marks), eg helgoland_wind.txt/csv : ')
         print('\n\n')
 
         out_file_name = input(
             'Enter desired output file name : ')
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
 
         print("\n\nIn the next step you need to provide a list of relevant parameters, for how to prescribe them: ",
               "Directional orientations can be prescribed as ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE','SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']",
 
               "Speed classes can be prescribed as [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] ",
               "Moving window duration can be prescribed as ['2MS', '3MS', '4MS', '5MS', '6MS']\n\n", sep='\n\n')
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
 
         quad = input(
             "\nProvide list of directional orientations of relavance as mentioned above (minimum 2) :  ")
@@ -552,6 +583,11 @@ if __name__ == '__main__':
                                       output_file, parent=False)
 #%% COSMO wind file generator
     elif choice == 8:
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
+              
         print("""
                 \nThe main path containing the COSMO files should be structured as such\n\nTWO folders in the main path\n\nFolder 1 should be named UV and should have all the U and V monthly cosmo files you wish to extract from.
                 \nFolder 2 should be named PS and should have all the PS monthly files.
@@ -562,8 +598,12 @@ if __name__ == '__main__':
                 \n In the current RepD3D version the components are rotated to true North (UTM)
                 """)
 
-        print('\n\nPlease make sure the auxillary files, your equidistant 6X& delft grid and cosmo_latlon_rot.grb are in the main path as the cosmo folders UV and PS.')
+        print('\n\nPlease make sure the auxillary files, your equidistant 6X6 delft grid(.mat) and cosmo_latlon_rot.grb are in the main path as the cosmo folders UV and PS.')
         print('\nThey should be outside the UV and PS folders.')
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
 
         cosmo_path_req = input(
             "\n\nMain path with COSMO (U,V,PS) data folders and aux mat files:")
@@ -602,4 +642,11 @@ if __name__ == '__main__':
                                                            ref_time,crs_type)
 
     else:
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)
         print("You probably din't insert the number right, Please run again! ")
+        
+        print("""
+              --------------------------------NOTE-----------------------------
+              """)

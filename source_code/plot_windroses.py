@@ -10,6 +10,7 @@ def plot_windroses(overall_file, total_start, total_end, rep_file, parent=None, 
     import matplotlib.gridspec as gridspec
     import matplotlib.colorbar as colorbar
 
+#%% Prepare file
     plt.rcParams['font.family'] = 'Times New Roman'
     plt.rcParams['font.size'] = 10
 
@@ -30,18 +31,14 @@ def plot_windroses(overall_file, total_start, total_end, rep_file, parent=None, 
 
     rep_file = pd.read_csv(rep_file)
     
+    # Prepare plot
     sns.set(style='white')
-    font_prop_1 = FontProperties(family='Times New Roman', size=14)
     font_prop_2 = FontProperties(family='Times New Roman', size=12)
 
-    fig_width_cm = 20
-    fig_height_cm = 10  
-    fig_width_in = fig_width_cm / 2.54
-    fig_height_in = fig_height_cm / 2.54
-
-    fig = plt.figure(figsize=(fig_width_in, fig_height_in))
+# %% prepare plot     
+    fig = plt.figure(figsize=(12, 4))
     
-    gs = gridspec.GridSpec(2, 3, height_ratios=[4, 0.2])
+    gs = gridspec.GridSpec(2, 3, height_ratios=[4, 0.3],hspace=0.5,wspace=0.3)
 
     ax1 = fig.add_subplot(gs[0, 0], projection='windrose')
     ax2 = fig.add_subplot(gs[0, 1], projection='windrose')
@@ -49,8 +46,19 @@ def plot_windroses(overall_file, total_start, total_end, rep_file, parent=None, 
 
     cbar_ax = fig.add_subplot(gs[1, :])
     
-    canvas = None # Initialize canvas
-    
+    # canvas = None # Initialize canvas
+    def plot_windrose(ax, data_dir, data_speed, title):
+        ax.contourf(data_dir, data_speed, bins=[
+            0, 0.5, 1.5, 3.3, 5.5, 7.9, 10.7, 13.8, 17.1, 20.7, 24.4, 28.4], nsector=36, cmap=plt.cm.Reds, normed=True)
+        ax.set_thetagrids(range(0, 360, 90), labels=[90, 0, 270, 180])
+        ax.set_yticks(np.arange(0, 8, step=1))
+        ax.set_yticklabels(np.arange(0, 8, step=1))
+        ax.tick_params(axis='x', labelsize=12, pad=2)
+        ax.tick_params(axis='y', labelsize=12, color='white')
+        ax.grid(True, linestyle='--', alpha=0.8)
+        ax.set_theta_zero_location('W', offset=-180)
+        ax.set_title(title, fontsize=14, fontproperties=font_prop_2)
+
     def plot_for_index(index):
         cp_start = rep_file['start_point'][index]
         cp_end = rep_file['end_point'][index]
@@ -64,20 +72,8 @@ def plot_windroses(overall_file, total_start, total_end, rep_file, parent=None, 
         ax3.clear()
         cbar_ax.clear()
 
-        def plot_windrose(ax, data_dir, data_speed, title):
-            ax.contourf(data_dir, data_speed, bins=[
-                0, 0.5, 1.5, 3.3, 5.5, 7.9, 10.7, 13.8, 17.1, 20.7, 24.4, 28.4], nsector=36, cmap=plt.cm.Reds, normed=True)
-            ax.set_thetagrids(range(0, 360, 90), labels=[90, 0, 270, 180])
-            ax.set_yticks(np.arange(0, 8, step=1))
-            ax.set_yticklabels(np.arange(0, 8, step=1))
-            ax.tick_params(axis='x', labelsize=12, pad=2)
-            ax.tick_params(axis='y', labelsize=12, color='white')
-            ax.grid(True, linestyle='--', alpha=0.8)
-            ax.set_theta_zero_location('W', offset=-180)
-            ax.set_title(title, fontsize=14, fontproperties=font_prop_2)
-
         plot_windrose(ax1, obs_data_97_16['dir'], obs_data_97_16['speed'], f'Total reference period\n{start_time} to {end_time}')
-        plot_windrose(ax2, prospect_data['dir'], prospect_data['speed'], f'Top rep period\n{cp_start} to {cp_end}\n{freq} months')
+        plot_windrose(ax2, prospect_data['dir'], prospect_data['speed'], f'Rep period\n{cp_start} to {cp_end}\n{freq} months')
 
         ax3.contour(obs_data_97_16['dir'], obs_data_97_16['speed'], bins=[
             0, 0.5, 1.5, 3.3, 5.5, 7.9, 10.7, 13.8, 17.1, 20.7, 24.4, 28.4], nsector=36, colors='k', normed=True)
@@ -105,11 +101,16 @@ def plot_windroses(overall_file, total_start, total_end, rep_file, parent=None, 
            
     if parent:
         canvas = FigureCanvasTkAgg(fig, master=parent)
-        canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        canvas.draw()
     else:
         plot_for_index(initial_index)
         plt.show()
+
+#%% buttons
+    # # Initialize index for navigation
+    initial_index = 0
+    plot_for_index(initial_index)
     
     # Function to handle next button click
     def next_plot():
