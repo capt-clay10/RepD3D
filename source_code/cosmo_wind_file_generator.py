@@ -68,12 +68,25 @@ def create_wind_fields_cosmo(grid_ed_path, const_path, cosmo_files_path,
         Output:
             theta: Rotation angle for each grid point (2D array, in radians)
         """
-        # List all UV and PS files in the COSMO directory
-        A = [f for f in os.listdir(os.path.join(
-            cosmo_dir, 'UV')) if f.endswith('.grb')]
-        B = [f for f in os.listdir(os.path.join(
-            cosmo_dir, 'PS')) if f.endswith('.grb')]
-
+        # Sorting function to extract the numeric date part from filenames
+        def extract_date(filename):
+            return int(filename.split('.')[-2])  # Extracts '200405' from 'PS.2D.200405.grb'
+        
+        # Get all UV files
+        uv_files = [f for f in os.listdir(os.path.join(cosmo_dir, 'UV')) if f.endswith('.grb')]
+        
+        # Separate U and V files
+        u_files = sorted([f for f in uv_files if f.startswith('U_')], key=extract_date)
+        v_files = sorted([f for f in uv_files if f.startswith('V_')], key=extract_date)
+        
+        # Reconstruct the UV list (U files first, then V files)
+        A = u_files + v_files
+        
+        B = sorted(
+            [f for f in os.listdir(os.path.join(cosmo_dir, 'PS')) if f.endswith('.grb')],
+            key=extract_date
+        )
+        
         for i in tqdm(range(0, len(A) // 2), desc='Extracting wind and pressure fields', total=(len(A) // 2), leave=True, mininterval=0.1):
             # Define file paths for U, V, and PS components
             WU_file = os.path.join(cosmo_dir, 'UV/', 'U_' + A[i][2:])
