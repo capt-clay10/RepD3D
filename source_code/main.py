@@ -69,8 +69,8 @@ if __name__ == '__main__':
           'For boundary location and mdw file, type 5',
           'For adding sea level change to .bct files, type 6',
           'For identifying Representative period, type 7',
-          'For generating COSMO wind field files, type 8', sep='\n')
-    print('\nImportant information : for choice 1 , boundary files cannot be generated with overlapping input years')
+          'For generating COSMO wind field files, type 8\n', sep='\n')
+    print('Important information : for choice 1 , boundary files cannot be generated with overlapping input years')
     
     print("""
           --------------------------------NOTE-----------------------------
