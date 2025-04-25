@@ -1,6 +1,6 @@
 # ![repd3d_logo](https://github.com/user-attachments/assets/b1de47b1-be95-4b24-98d8-cc44c64f2e5a) RepD3D: A tool for representative period identification and associated boundary condition extraction
 
-## Download RepD3D.exe or run the main.py file
+## Download RepD3D.exe from the release or run the main.py file
   
 ### What does this code do?
 1) Identify Representative period based on hindcast wind data (all-class correlation and selective-class correlation) - Universally valid
@@ -26,17 +26,21 @@
 #
 ### Representative period identification
 * Citation for using Representative period algorithm (source paper): **Soares, C.C., Galiforni-Silva, F., Winter, C., 2024. Representative residual transport pathways in a mixed-energy open tidal system. Journal of Sea Research 201, 102530. https://doi.org/10.1016/j.seares.2024.102530**
+* Citation for using the RepD3D tool box (source paper): **Soares, C. C., Knies, A., & Winter, C. (2025). RepD3D: A tool for representative period identification and associated boundary condition extraction. MethodsX, 14, 103109. https://doi.org/10.1016/j.mex.2024.103109**
 #
+
 ### Algorithm notes
 * It uses bilinear interpolation to extract EasyGSH data
 * The wave parameters are converted to nautical convention and wave-from orientation
 * The COSMO data is corrected to true North
 #
+
 ### Working on
 * Adding variability in wave parameters for climate change scenarios.
 * Including TrilaWatt dataset, an extension of EasyGSH dataset, coverage from Netherlands to Denmark
 * Opportunity to create synthetic boundary conditions
 #
+
 * Snippet of the GUI startup
 
 ![Startup_GUI](https://github.com/user-attachments/assets/0e070b96-c9b1-4ff3-81c4-80b23c6271bc)
