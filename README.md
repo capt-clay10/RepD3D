@@ -1,14 +1,139 @@
-# ![repd3d_logo](https://github.com/user-attachments/assets/b1de47b1-be95-4b24-98d8-cc44c64f2e5a) RepD3D: A tool for representative period identification and associated boundary condition extraction
+# RepD3D – Representative‐period Detection & Delft3D Boundary‑data Toolbox
 
-## Download RepD3D.exe from the release or run the main.py file
+![RepD3D logo](https://github.com/user-attachments/assets/b1de47b1-be95-4b24-98d8-cc44c64f2e5a)
+
+RepD3D is a Windows‑first graphical user interface (GUI) and open‑source Python library that helps coastal and estuarine modelers
+
+* **identify statistically representative simulation periods** from long‑term wind records using the algorithm of *Soares et al., 2024*.
+* **extract space‑ and time‑varying boundary conditions** (water level, waves, wind & pressure) from public hindcast data sets, and
+* **write fully‑formatted Delft3D‑4 input files** (`.bct`, `.bcw`, `.amu/.amv/.amp`, `.wnd`).
+
+The toolbox is packaged as a portable **RepD3D.exe** as well as pure Python code (`main.py`) that runs on any platform with the required libraries.
+
+---
+
+## Key features
+
+| Module | Purpose | Output files |
+|--------|---------|--------------|
+| **RPI** | Identify all‑class *or* selective‑class representative periods with user‑defined window length. | Output rank list `.txt`, interactive wind‑rose viewer |
+| **Extract all** | Generation of water‑level (`.bct`) *and* wave (`.bcw`) files, plus updated `.mdw` and CSV of boundary coordinates. | `.bct`, `.bcw`, updated `.mdw`, `*_locations.csv` |
+| **Bct / Bcw year‑overlap** | Build multi‑year time‑series for water level or waves. | `.bct` / `.bcw` |
+| **SLR adjuster** | Add gradual or constant sea‑level rise to existing `.bct`. | new `.bct` |
+| **Wind‑field generator** | Convert COSMO‑REA6 (10 m U & V, surface P) to Delft3D wind/pressure grids on a user grid. | `.amu`, `.amv`, `.amp`, `xwind.wnd`, `ywind.wnd` |
+
+---
+
+## Quick start (GUI)
+
+1. **Download** the latest `RepD3D.exe` from the [releases](https://github.com/⋯/releases) page and place it in your project folder.
+2. **Double‑click** to launch.  A splash screen will appear followed by the main menu.
+3. **Browse** to a working directory and select the desired sub‑module.
+4. **Follow on‑screen prompts** to choose grids, boundaries, NetCDF files and parameters.
+5. Output files are written to the working directory (all times in UTC).
+
+> **Tip:** The GUI may appear unresponsive while heavy interpolation loops are running; a progress console at the bottom streams real‑time log output.
+
+---
+
+## Install from source (CLI)
+
+```bash
+# 1. Clone the repo
+$ git clone https://github.com/capt-clay10/RepD3D.git
+$ cd RepD3D
+
+# 2. Create environment (Python ≥3.9)
+$ conda create -n repd3d python=3.9
+$ conda activate repd3d
+
+# 3. Install dependencies
+$ pip install -r requirements.txt  # see list below
+
+# 4. Run command‑line interface
+$ python main.py
+```
+
+### Python dependencies
+
+```
+ast cfgrib dask ecCodes h5py h5netcdf matplotlib numpy pandas pyproj scikit‑learn scipy tqdm utm xarray windrose ttkbootstrap pillow
+```
+
+> Some packages (`cfgrib`, `ecCodes`) require C‑libraries.  On Windows we recommend the conda‑forge channel.
+
+---
+
+## Required data sets
+
+| Data set | Coverage | Used for | Source |
+|----------|----------|----------|--------|
+| **EasyGSH‑DB 1000 m** | German North Sea, 1996‑2016 | Water level & wave forcing | <https://mdi-de.baw.de/easygsh/> |
+| **COSMO‑REA6 hourly 2D** | Europe, 1995‑2019 | Wind (U, V) & surface pressure | <https://opendata.dwd.de/climate_environment/REA/COSMO_REA6/hourly/2D/> |
+
+Download files of interest into the working directory following the folder scheme below:
+
+```
+Working directory/
+    YYYY_1000m_wave_2D.nc
+    YYYY_1000m_waterlevel_2D
+    COSMO_YYYY/
+        ├─ PS/        # surface pressure GRIB     (PS.*.grb)
+        ├─ UV/        # 10 m wind  GRIB           (U_*.grb, V_*.grb)
+```
+
+---
+
+## Typical workflow
+
+1. **Design grids & boundaries** in Delft3D‑RGFGRID / FLOW / WAVE; save `.grd`, `.bnd`, `.mdf`, `.mdw`.
+2. **Run RPI** to choose an unfiltered, reduced representative period matching your study goals.
+3. **Use Extract modules** to build boundary time‑series for that period.
+4. **(Optional) Add SLR** or generate COSMO wind fields.
+5. **Launch Delft3D**, reference the generated files, and simulate!
+
+---
+
+## Screenshots
+
+| Screenshot |
+|------------|
+| **Main menu**<br>![Main menu](https://github.com/user-attachments/assets/9c4f226a-a729-42ea-b14a-40902fdca57f) |
+
+| **Representative-period viewer**<br>![Representative-period viewer](https://github.com/user-attachments/assets/6ac10213-0ff1-4087-bf77-10bf52bcd61a) |
+
+| **EasyGSH extractor**<br>![EasyGSH extractor](https://github.com/user-attachments/assets/088161cd-965c-4e2c-b4b1-4d395344e5cd) |
+
+| **COSMO wind extractor**<br>![COSMO wind extractor](https://github.com/user-attachments/assets/ea3ef267-2420-42e5-8378-68f9cee96505) |
+---
+
+
+## Citation
+
+If you use RepD3D in your research, please cite the following:
+
+```
+@article{Soares2025,
+  title   = {RepD3D: A tool for representative period identification and associated boundary condition extraction},
+  journal = {MethodsX},
+  volume  = {14},
+  pages   = {103109},
+  year    = {2025},
+  author  = {C. C. Soares and A. Knies and C. Winter},
+  doi     = {10.1016/j.mex.2024.103109}
+}
+
+* Citation for using Representative period algorithm (source paper): **Soares, C.C., Galiforni-Silva, F., Winter, C., 2024. Representative residual transport pathways in a mixed-energy open tidal system. Journal of Sea Research 201, 102530. https://doi.org/10.1016/j.seares.2024.102530**
+* Citation for using the RepD3D tool box (source paper): **Soares, C. C., Knies, A., & Winter, C. (2025). RepD3D: A tool for representative period identification and associated boundary condition extraction. MethodsX, 14, 103109. https://doi.org/10.1016/j.mex.2024.103109**
+
+
+```
+
+### Please also acknowledge the underlying data sets:
+
+* EasyGSH‑DB (Hagen et al., 2020)  
+* COSMO‑REA6 (Bollmeyer et al., 2015)
   
-### What does this code do?
-1) Identify Representative period based on hindcast wind data (all-class correlation and selective-class correlation) - Universally valid
-2) Extract time-series water level 2D information for any designed boundaries within the EasyGSH model domain  (data found under the synoptic simulation, UnTRIM2, 1000m grid section.) - German North Sea only
-3) Extract time series wave/Sea-state data 2D (significant height, peak period, direction, directional spread) for any designed boundaries within the EasyGSH model domain (data found under the synoptic simulation, UnTRIM2, 1000m grid section.) - German Nort Sea only
-4) Extract spatial wind and pressure fields and create Delft3D-compatible wind files. - Europe wide
-#
-### Data sources and citations
 * Source of easygsh data  **https://mdi-de.baw.de/easygsh/Easy_Viewer_syn.html#home**
 * Citations for using EasyGSH data : **Hagen, R., Plüß, A., Schrage, N., Dreier, N. (2020): EasyGSH-DB: Themengebiet - synoptische Hydrodynamik. Bundesanstalt für Wasserbau. https://doi.org/10.48437/02.2020.K2.7000.0004**
 
@@ -23,63 +148,26 @@
     * COSMO data is provided on a rotated pole, which is currently corrected in the algorithm to true north
     * COSMO data U_10m, V_10m and PS is used in this toolbox
     * Additionally a Delft3D grid of 6X6 km, extracted as .mat (v7) is required
-#
-### Representative period identification
-* Citation for using Representative period algorithm (source paper): **Soares, C.C., Galiforni-Silva, F., Winter, C., 2024. Representative residual transport pathways in a mixed-energy open tidal system. Journal of Sea Research 201, 102530. https://doi.org/10.1016/j.seares.2024.102530**
-* Citation for using the RepD3D tool box (source paper): **Soares, C. C., Knies, A., & Winter, C. (2025). RepD3D: A tool for representative period identification and associated boundary condition extraction. MethodsX, 14, 103109. https://doi.org/10.1016/j.mex.2024.103109**
-#
+---
 
-### Algorithm notes
-* It uses bilinear interpolation to extract EasyGSH data
-* The wave parameters are converted to nautical convention and wave-from orientation
-* The COSMO data is corrected to true North
-#
+## Contributing
 
-### Working on
-* Adding variability in wave parameters for climate change scenarios.
-* Including TrilaWatt dataset, an extension of EasyGSH dataset, coverage from Netherlands to Denmark
-* Opportunity to create synthetic boundary conditions
-#
+Bug reports, feature requests and pull requests are welcome!  Please open an issue first to discuss your ideas.
 
-* Snippet of the GUI startup
+> **Road‑map:** Support additional hindcast products (TriwaWaTT, ERA5), automatic download helpers, and native Linux GUI.
 
-![Startup_GUI](https://github.com/user-attachments/assets/0e070b96-c9b1-4ff3-81c4-80b23c6271bc)
+---
 
-* Snippet of the Representative period module
+## License
 
-![RPI_module_GUI](https://github.com/user-attachments/assets/f1b3c0b7-c6d9-4140-b3b6-cbdb8a8c5af4)
+This project is released under the **MIT License** – see [`LICENSE`](LICENSE).
 
-* Snippet of the Wind file generator- COSMO REA6
+---
 
-![COSMO_GUI](https://github.com/user-attachments/assets/978632dd-5e57-4648-af9e-244afd53cabc)
+## Contact
 
-* Snippet of water and wave time series file generator module using EasyGSH
-![Process_allfiles_GUI](https://github.com/user-attachments/assets/0a22c74f-dbb6-45f9-919b-3f39449277a4)
+Clayton C. Soares – `clayton.soares@ifg.uni-kiel.de`  
+Christian Winter  
+Arne Knies
 
-#
-### Python environment requirements
-* ast
-* cfgrib
-* csv
-* dask
-* datetime
-* ecCodes
-* h5py
-* math
-* numpy 
-* os
-* pandas
-* pyproj
-* re
-* requests
-* sci-kit-learn
-* scipy
-* statistics
-* sys 
-* time
-* tqdm
-* utm 
-* xarray
-
-### As a personal note from a fellow modeller ###
-Always validate results yourself!
+> *Always validate numerical‑model results yourself!*  RepD3D provides no guarantees for suitability for any specific purpose.
