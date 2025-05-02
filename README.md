@@ -1,5 +1,9 @@
 # RepD3D – Representative‐period Detection & Delft3D Boundary‑data Toolbox
 
+![GitHub release](https://img.shields.io/github/v/release/capt-clay10/RepD3D?style=for-the-badge)
+![License](https://img.shields.io/github/license/capt-clay10/RepD3D?style=for-the-badge)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=for-the-badge)
+
 ![RepD3D logo](https://github.com/user-attachments/assets/b1de47b1-be95-4b24-98d8-cc44c64f2e5a)
 
 RepD3D is a Windows‑first graphical user interface (GUI) and open‑source Python library that helps coastal and estuarine modelers
