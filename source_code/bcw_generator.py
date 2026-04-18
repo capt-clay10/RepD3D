@@ -5,7 +5,7 @@ The function to extract wave data from the netcdf file and create a bcw file
 
 
 def bcw_file_generator(
-        boundaries_wave, nc_file_wave, mdw_file, start_time, end_time, step_wave, bcw_file_name, crs_type):
+        boundaries_wave, nc_file_wave, mdw_file, start_time, end_time, step_wave, bcw_file_name, crs_type, reference_time, tstart):
     # %% Import packages
     import pandas as pd
     import numpy as np
@@ -245,14 +245,12 @@ def bcw_file_generator(
 
     # %% Extract information from mdw file
 
-    ref_date_unedited = start_time  # because reference time is not reference date
-    ref_date_unedited = start_time.split(' ')[0]
-    ref_date = ref_date_unedited.replace('-', '')
+    ref_date = reference_time
     print(".")
 
     # %% Generate the time steps for bcw
     min_data_time_step = 20  # The time resolution of easyGsh dataset
-    bcw_time_start = 0.0  # the format accepted in bcw files
+    bcw_time_start = float(tstart)  # minutes since reference time
     one_time_step_bcw = float(step_wave)
     print(".")
     # %% Configuring time step to adhere to the coupling interval
@@ -350,7 +348,7 @@ def bcw_file_generator(
     # get the max number of datapoints
     total_time_steps = len(direction_with_neg)
     # calculate end point
-    time_stop_bcw = (one_time_step_bcw * total_time_steps)
+    time_stop_bcw = bcw_time_start + (one_time_step_bcw * total_time_steps)
     float_range = np.arange(bcw_time_start, time_stop_bcw,
                             one_time_step_bcw).tolist()  # create a range of the input time
 

@@ -256,7 +256,8 @@ if __name__ == '__main__':
         bcw = bcw_generator.bcw_file_generator(
             boundaries_wave=boundaries_wave, nc_file_wave=nc_file_wave, mdw_file=mdw_file, start_time=start_time,
             end_time=end_time, step_wave=step_wave,
-            bcw_file_name=bcw_file, crs_type=crs_type_wave)
+            bcw_file_name=bcw_file, crs_type=crs_type_wave,
+            reference_time=reference_time, tstart=start)
 
         print('.')
         print('The process of extracting wave boundary conditions has now completed in : ')
@@ -362,6 +363,14 @@ if __name__ == '__main__':
             'Enter the simulation end time in the format YYYY-MM-DD hh:mm:ss : ')
         end_time = end_time_req  # '2015-03-14 00:00:00'
 
+        ref_date_req = input(
+            'Enter the model reference date in the format YYYY-MM-DD : ')
+        reference_time = ref_date_req.replace('-', '')
+        # Calculate tstart as minutes between reference date and simulation start time
+        ref_dt = datetime.strptime(ref_date_req + " 00:00:00", "%Y-%m-%d %H:%M:%S")
+        start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+        tstart = (start_dt - ref_dt).total_seconds() / 60.0
+
         step_wave_req = input(
             'Enter time step to extract WAVE data (max resolution is 20mins, should be multiples of 20) format 20 : ')
 
@@ -406,7 +415,8 @@ if __name__ == '__main__':
             boundaries_wave=boundaries_wave, nc_files_wave =nc_file_wave,
             mdw_file=mdw_file, start_time=start_time,
             end_time=end_time, step_wave=step_wave,
-            bcw_file_name=bcw_file, crs_type=crs_type_wave)
+            bcw_file_name=bcw_file, crs_type=crs_type_wave,
+            reference_time=reference_time, tstart=tstart)
         print('.')
         print(
             'The process of extracting wave boundary conditions has now completed in : ')

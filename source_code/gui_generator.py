@@ -527,7 +527,8 @@ class Application(tk.Tk):
                 bcw = bcw_generator.bcw_file_generator(
                     boundaries_wave=boundaries_wave, nc_file_wave=nc_file_wave, mdw_file=mdw_file, start_time=start_time,
                     end_time=end_time, step_wave=step_wave,
-                    bcw_file_name=bcw_file, crs_type=crs_type_wave)
+                    bcw_file_name=bcw_file, crs_type=crs_type_wave,
+                    reference_time=reference_time, tstart=start)
 
                 # Write the new mdw file
                 mdw_writer.write_mdw_file(
@@ -1190,6 +1191,12 @@ class Application(tk.Tk):
         e_date_entry = tk.Entry(frameright, width=50)
         e_date_entry.pack(pady=5)
     
+        # Reference date
+        ref_date_label = tk.Label(frameright, text="\nModel reference date\n (YYYY-MM-DD):", font='Times')
+        ref_date_label.pack(pady=5)
+        ref_date_entry = tk.Entry(frameright, width=50)
+        ref_date_entry.pack(pady=5)
+    
         def check_submit():
             t = time.time()
             if not mdw_entry.get():
@@ -1204,6 +1211,8 @@ class Application(tk.Tk):
                 messagebox.showwarning("Warning", "Please write the start date for simulation.")
             elif not e_date_entry.get():
                 messagebox.showwarning("Warning", "Please write the end date for simulation.")
+            elif not ref_date_entry.get():
+                messagebox.showwarning("Warning", "Please write the model reference date.")
             else:
                 # Input files from browsed
                 step_wave = [20, 40, 60, 80, 120][selected_step_w.get() - 1]
@@ -1212,6 +1221,12 @@ class Application(tk.Tk):
                 bnd_wave_input = bndw_entry.get()
                 start_time = s_date_entry.get()
                 end_time = e_date_entry.get()
+                ref_date_input = ref_date_entry.get()
+                reference_time = ref_date_input.replace('-', '')
+                # Calculate tstart as minutes between reference date and simulation start time
+                ref_dt = datetime.strptime(ref_date_input + " 00:00:00", "%Y-%m-%d %H:%M:%S")
+                start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                tstart = (start_dt - ref_dt).total_seconds() / 60.0
     
                 # Output file
                 wave_name_with_dot = mdw_file.partition('.')
@@ -1236,7 +1251,8 @@ class Application(tk.Tk):
                     boundaries_wave=boundaries_wave, nc_files_wave=nc_files_wave,
                     mdw_file=mdw_file, start_time=start_time,
                     end_time=end_time, step_wave=step_wave,
-                    bcw_file_name=bcw_file, crs_type=crs_type_wave)
+                    bcw_file_name=bcw_file, crs_type=crs_type_wave,
+                    reference_time=reference_time, tstart=tstart)
                 
                 print(
                     'The process of extracting wave boundary conditions has now completed.')
