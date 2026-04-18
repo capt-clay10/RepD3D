@@ -10,9 +10,14 @@ RepD3D is a Windows‑first graphical user interface (GUI) and open‑source Pyt
 
 * **identify statistically representative simulation periods** from long‑term wind records using the algorithm of *Soares et al., 2024*.
 * **extract space‑ and time‑varying boundary conditions** (water level, waves, wind & pressure) from public hindcast data sets, and
-* **write fully‑formatted Delft3D‑4 input files** (`.bct`, `.bcw`, `.amu/.amv/.amp`, `.wnd`).
+* **write fully‑formatted Delft3D input files** (`.bct`, `.bcw`, `.amu/.amv/.amp`, `.wnd`).
 
-The toolbox is packaged as a portable **RepD3D.exe** as well as pure Python code (`main.py`) that runs on any platform with the required libraries.
+The toolbox is packaged as a portable **RepD3D.exe** file, as well as pure Python code (`main.py`), which runs on any platform with the required libraries.
+
+## In development
+* Inclusion of TrilaWatt dataset (https://dl.datenrepository.baw.de/7000/B3955.02.04.70237/)
+* Inclusion of Icon-EU wind fields (https://huggingface.co/datasets/openclimatefix/dwd-icon-eu/tree/main)
+* Inclusion of a universal boundary condition extractor (add source file -> select variable for extraction -> write to Delft3D compatible files) 
 
 ---
 
