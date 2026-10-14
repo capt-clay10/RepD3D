@@ -1,0 +1,19 @@
+# RepD3D v2.0 runtime dependencies, pinned to the environment the v2.0.0 release build (2026-10-14) was made with.
+# Python 3.14 (conda env "RepD3D_v314"). eccodes is easiest to install from conda-forge; see README.
+numpy==2.4.3
+pandas==3.0.2
+xarray==2026.4.0
+dask==2026.6.0
+scipy==1.17.1
+scikit-learn==1.8.0
+netCDF4==1.7.4
+cfgrib==0.9.15.1
+eccodes==2.46.0
+pyproj==3.7.2
+customtkinter==5.2.2
+matplotlib==3.10.8
+pillow==12.1.1
+
+# Only needed to build the Windows executable
+pyinstaller==6.20.0
+auto-py-to-exe==2.50.1
