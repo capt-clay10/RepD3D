@@ -32,6 +32,7 @@ Usage:
 import math
 import logging
 import threading
+import time
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -126,6 +127,35 @@ def _assess_stencil_quality(stencil: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _assess_derived_stencil(stencil: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Reliability of a derived quantity (wave peak period, directional
+    spreading; see backend_bc_extractor._wave_derived_variables): such a
+    field is undefined wherever there are no waves, so gaps are expected and
+    the only disqualifying stencil is one without a value at any timestep in
+    any contributing corner (the mask-normalised interpolation could then not
+    produce a series).
+    """
+    has_value = any(
+        float(corner['normalized_weight']) > 0.0 and not corner['all_nan']
+        for corner in stencil['corners'].values()
+    )
+    reliable = has_value and not stencil['outside']
+    issues = []
+    if stencil['outside']:
+        issues.append('point lies outside the dataset extent')
+    if not has_value:
+        issues.append('no source value at any timestep in any contributing corner')
+    return {
+        'reliable': reliable,
+        'bad_weight': 0.0 if reliable else 1.0,
+        'max_bad_corner_weight': 0.0 if reliable else 1.0,
+        'issues': issues,
+        'edge_gap_limit': 0,
+        'internal_gap_limit': 0,
+    }
+
+
 def _assessment_summary(variable: str, assessment: Dict[str, Any]) -> str:
     """Format the most useful stencil issues into one short log line."""
 
@@ -145,31 +175,83 @@ def _point_cache_key(lat: float, lon: float) -> Tuple[float, float]:
     return (round(float(lat), 10), round(float(lon), 10))
 
 
-def _build_qc_context(ds, variables: List[str], preset) -> Dict[str, Any]:
-    """Precompute reusable per-variable validity masks for fast QC."""
+def _build_qc_context(ds, variables: List[str], preset, logger=None, cancel_event=None) -> Dict[str, Any]:
+    """Precompute per-variable validity masks and per-cell statistics for QC.
+
+    One pass over each required variable (block by block along the time axis,
+    see interpolation.cell_validity_stats) yields, per grid cell, how many
+    timesteps are valid and where the first and last valid samples sit. The
+    fast-QC masks are derived from the counts exactly as before (valid at
+    every step / at any step), and the strict and intertidal checks take
+    their per-corner gap statistics from the same arrays instead of pulling
+    four corner time series off the disk per variable and point. On
+    one-field-per-chunk files (TrilaWatt, EasyGSH) such a read decompresses
+    every chunk of the window — ~50 s per corner series, 17 min per
+    strict-QC point for the 2017+2018 TrilaWatt waves (27649 steps,
+    measured 2026-10-15) — so a 90-section wave run spent ~20 h in QC alone.
+    """
 
     required_vars = list(dict.fromkeys(v for v in variables if v))
     metrics = {}
+    cancel_check = (lambda: _check_cancel(cancel_event)) if cancel_event is not None else None
+    if required_vars and logger is not None:
+        logger.info(
+            f"Scanning {len(required_vars)} variable(s) for valid-data coverage "
+            f"(one pass over the source window)..."
+        )
 
     for variable in required_vars:
-        valid = ds[variable].notnull()
-        if preset.time_coord in valid.dims:
-            full_valid = valid.all(dim=preset.time_coord)
-            any_valid = valid.any(dim=preset.time_coord)
-        else:
-            full_valid = valid
-            any_valid = valid
+        started = time.perf_counter()
+        stats = interp.cell_validity_stats(
+            ds[variable], preset.time_coord, preset.lat_coord, preset.lon_coord,
+            cancel_check=cancel_check,
+        )
+        if stats is None:
+            # Unexpected dimension layout: the original eager masks, and the
+            # strict/intertidal checks read their stencils as before.
+            if logger is not None:
+                logger.warning(
+                    f"  {variable}: dimensions {tuple(ds[variable].dims)} are not "
+                    f"({preset.time_coord}, {preset.lat_coord}, {preset.lon_coord}); "
+                    f"QC statistics unavailable, stencils will be read per point (slow)."
+                )
+            valid = ds[variable].notnull()
+            if preset.time_coord in valid.dims:
+                full_valid = valid.all(dim=preset.time_coord)
+                any_valid = valid.any(dim=preset.time_coord)
+            else:
+                full_valid = valid
+                any_valid = valid
 
+            metrics[variable] = {
+                'full_valid_mask': np.asarray(
+                    full_valid.transpose(preset.lat_coord, preset.lon_coord).values,
+                    dtype=bool,
+                ),
+                'any_valid_mask': np.asarray(
+                    any_valid.transpose(preset.lat_coord, preset.lon_coord).values,
+                    dtype=bool,
+                ),
+            }
+            continue
+
+        n_steps, count, first, last = stats
         metrics[variable] = {
-            'full_valid_mask': np.asarray(
-                full_valid.transpose(preset.lat_coord, preset.lon_coord).values,
-                dtype=bool,
-            ),
-            'any_valid_mask': np.asarray(
-                any_valid.transpose(preset.lat_coord, preset.lon_coord).values,
-                dtype=bool,
-            ),
+            'full_valid_mask': count == n_steps,
+            'any_valid_mask': count > 0,
+            'n_steps': int(n_steps),
+            'valid_count': count,
+            'first_valid_index': first,
+            'last_valid_index': last,
         }
+        if logger is not None:
+            n_full = int((count == n_steps).sum())
+            n_none = int((count == 0).sum())
+            logger.info(
+                f"  {variable}: {n_full} of {count.size} cells valid at every step, "
+                f"{count.size - n_full - n_none} with gaps, {n_none} never valid "
+                f"({time.perf_counter() - started:.1f} s)"
+            )
 
     return {
         'required_vars': tuple(required_vars),
@@ -274,6 +356,85 @@ def _fast_evaluate_point_quality(
     return {'decision': 'ambiguous', 'issues': []}
 
 
+def _stencil_from_stats(lat, lon, ds, variable, preset, metrics) -> Dict[str, Any]:
+    """
+    interpolation.inspect_bilinear_stencil() rebuilt from the per-cell
+    statistics of the QC context — same keys, same numbers, no file access.
+    """
+    geometry = interp.inspect_bilinear_geometry(
+        lat, lon, ds, lat_coord=preset.lat_coord, lon_coord=preset.lon_coord
+    )
+    n_steps = int(metrics['n_steps'])
+    count = metrics['valid_count']
+    first = metrics['first_valid_index']
+    last = metrics['last_valid_index']
+    lat_idx1, lat_idx2 = geometry['lat_indices']
+    lon_idx1, lon_idx2 = geometry['lon_indices']
+    corner_cells = {
+        'Q11': (lat_idx1, lon_idx1),
+        'Q12': (lat_idx1, lon_idx2),
+        'Q21': (lat_idx2, lon_idx1),
+        'Q22': (lat_idx2, lon_idx2),
+    }
+    corners = {}
+    for key, (i, j) in corner_cells.items():
+        valid_count = int(count[i, j])
+        if valid_count == 0:
+            first_valid = None
+            last_valid = None
+            leading = n_steps
+            trailing = n_steps
+            internal = 0
+        else:
+            first_valid = int(first[i, j])
+            last_valid = int(last[i, j])
+            leading = first_valid
+            trailing = n_steps - last_valid - 1
+            internal = (last_valid - first_valid + 1) - valid_count
+        corners[key] = {
+            'n_steps': n_steps,
+            'valid_count': valid_count,
+            'valid_fraction': (valid_count / n_steps) if n_steps else 0.0,
+            'all_nan': (valid_count == 0),
+            'first_valid_index': first_valid,
+            'last_valid_index': last_valid,
+            'leading_nan_count': leading,
+            'trailing_nan_count': trailing,
+            'internal_nan_count': internal,
+            'normalized_weight': float(geometry['normalized_weights'][key]),
+        }
+    return {
+        'lat': geometry['lat'],
+        'lon': geometry['lon'],
+        'outside': geometry['outside'],
+        'lat_outside': geometry['lat_outside'],
+        'lon_outside': geometry['lon_outside'],
+        'point_on_grid': geometry['point_on_grid'],
+        'lat_indices': geometry['lat_indices'],
+        'lon_indices': geometry['lon_indices'],
+        'lat_coords': geometry['lat_coords'],
+        'lon_coords': geometry['lon_coords'],
+        'weights': dict(geometry['weights']),
+        'total_weight': float(geometry['total_weight']),
+        'corners': corners,
+    }
+
+
+def _inspect_stencil(lat, lon, ds, variable, preset, qc_context=None) -> Dict[str, Any]:
+    """Stencil summary for QC: from the context's per-cell statistics when present, else read from disk."""
+    metrics = ((qc_context or {}).get('metrics') or {}).get(variable)
+    if metrics and 'valid_count' in metrics:
+        return _stencil_from_stats(lat, lon, ds, variable, preset, metrics)
+    return interp.inspect_bilinear_stencil(
+        lat,
+        lon,
+        ds,
+        variable=variable,
+        lat_coord=preset.lat_coord,
+        lon_coord=preset.lon_coord,
+    )
+
+
 def _evaluate_point_quality(
     lat: float,
     lon: float,
@@ -286,20 +447,17 @@ def _evaluate_point_quality(
 
     cache = qc_context['strict_assessment_cache']
     qc_context['stats']['strict_point_calls'] += 1
+    derived = set(qc_context.get('derived_vars', ()))
     assessments = {}
     issues = []
     for variable in variables:
         key = (variable, *_point_cache_key(lat, lon))
         if key not in cache:
-            stencil = interp.inspect_bilinear_stencil(
-                lat,
-                lon,
-                ds,
-                variable=variable,
-                lat_coord=preset.lat_coord,
-                lon_coord=preset.lon_coord,
-            )
-            cache[key] = _assess_stencil_quality(stencil)
+            stencil = _inspect_stencil(lat, lon, ds, variable, preset, qc_context)
+            if variable in derived:
+                cache[key] = _assess_derived_stencil(stencil)
+            else:
+                cache[key] = _assess_stencil_quality(stencil)
         assessment = cache[key]
         assessments[variable] = assessment
         if not assessment['reliable']:
@@ -1494,6 +1652,9 @@ def _load_boundary_locations(model_type, boundary_path, grid_path, crs_type, utm
 
 GRID_MATCH_TOLERANCE_DEG = 1e-6   # coordinate agreement needed to call two grids identical
 REGRID_MIN_WET_WEIGHT = 0.5       # regridded cell keeps a value only if >= this weight is wet
+REGRID_TIME_CHUNK = 16            # timesteps per dask task when a file is regridded: interp holds several target-grid intermediates per task and the threaded scheduler runs many tasks at once (16 -> ~0.4-0.6 GB peak on a 200x200 target, 32 -> ~1 GB, 128 -> ~3 GB; measured 2026-10-15)
+LAZY_CHUNK_TARGET_BYTES = 64 * 1024 * 1024   # size of one lazy (dask) chunk along time
+MAX_DEDUP_SLICES = 64             # overlapping files: dedup by slicing up to this many runs, else by index
 
 
 def _describe_grid(path, lat, lon):
@@ -1540,7 +1701,15 @@ def _regrid_dataset(ds, lat_name, lon_name, target_lat, target_lon, logger):
             dropped.append(name)   # would carry the old axis into the merge
             continue
         if var.chunks is not None:
-            var = var.chunk({lat_name: -1, lon_name: -1})
+            # Whole fields per task (interp needs the full axes), but no more
+            # than REGRID_TIME_CHUNK steps per task: the interpolation holds
+            # a few target-grid-sized intermediates per task, so the lazy
+            # time chunking of _open_dataset would be too coarse here.
+            var = var.chunk({
+                lat_name: -1,
+                lon_name: -1,
+                **{d: REGRID_TIME_CHUNK for d in var.dims if d not in (lat_name, lon_name)},
+            })
         if np.issubdtype(var.dtype, np.floating):
             wet = var.notnull().astype('float32')
             weighted = var.fillna(0.0).interp(targets, method='linear')
@@ -1637,6 +1806,55 @@ def _grid_harmoniser(data_files, preset, logger):
     return preprocess
 
 
+def _lazy_time_chunks(paths, preset, logger):
+    """Dask chunking for the multi-file open: whole 2-D fields, many steps per chunk.
+
+    Without a chunks= argument open_mfdataset adopts the on-disk chunking, and
+    TrilaWatt/EasyGSH files hold one 2-D field per chunk, so every lazy array
+    carries one dask task per timestep: a 13-month window is ~27650 tasks and
+    reading one cell's series costs ~1.8 ms per step of scheduler overhead
+    (50 s per corner series, measured 2026-10-15) against ~0.2 ms per step for
+    the decompression itself. Chunks of about LAZY_CHUNK_TARGET_BYTES along the
+    time axis keep everything just as lazy and bounded, and remove that
+    overhead. The chunk length is sized from the LARGEST per-step field over
+    all files (mixed-resolution pairs may sort coarse-first). Dimensions other
+    than time keep their on-disk chunking. Returns None (= on-disk chunking,
+    the old behaviour) if any file cannot be sized.
+    """
+    time_name = preset.time_coord
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    slice_bytes = 0
+    stored_steps = 1          # largest on-disk chunk length along time (1 for TrilaWatt/EasyGSH)
+    for path in paths:
+        try:
+            with xr.open_dataset(path) as probe:
+                if time_name not in probe.dims:
+                    return None
+                for var in probe.data_vars.values():
+                    if time_name not in var.dims:
+                        continue
+                    per_step = int(var.size // max(1, int(var.sizes[time_name])))
+                    slice_bytes = max(slice_bytes, int(var.dtype.itemsize) * per_step)
+                    preferred = var.encoding.get('preferred_chunks')
+                    if isinstance(preferred, dict) and time_name in preferred:
+                        stored_steps = max(stored_steps, int(preferred[time_name]))
+                    elif var.encoding.get('chunksizes'):
+                        stored_steps = max(stored_steps, int(var.encoding['chunksizes'][var.dims.index(time_name)]))
+        except Exception as exc:   # never let chunk sizing break a run
+            logger.info(
+                f"[open] Could not size lazy chunks for {Path(path).name} ({exc}); "
+                f"using the on-disk chunking."
+            )
+            return None
+    if slice_bytes <= 0:
+        return None
+    steps = int(max(1, min(4096, LAZY_CHUNK_TARGET_BYTES // slice_bytes)))
+    if stored_steps > 1:      # whole stored chunks per dask chunk, never a chunk boundary inside one
+        steps = max(stored_steps, (steps // stored_steps) * stored_steps)
+    return {time_name: steps}
+
+
 def _open_dataset(data_files, preset, timing, logger):
     """Open one or more NetCDF files and slice to simulation period.
 
@@ -1672,6 +1890,7 @@ def _open_dataset(data_files, preset, timing, logger):
             join='outer',
             compat='no_conflicts',
             preprocess=_grid_harmoniser(files, preset, logger),
+            chunks=_lazy_time_chunks(files, preset, logger),
         )
 
     start_dt = timing['start_datetime'] + timedelta(hours=preset.time_offset_hours)
@@ -1754,7 +1973,22 @@ def _drop_duplicate_times(ds, preset, logger):
         except Exception as exc:  # never let a diagnostic break extraction
             logger.info(f"[overlap]   ({var_name}: could not compare copies — {exc})")
 
-    return ds.isel({time_coord: np.sort(first_index)})
+    keep = np.sort(first_index)
+    # Prefer slices to an index array: the kept indices form a few contiguous
+    # runs (one per seam), and slicing keeps the lazy chunk layout intact. An
+    # index-array take re-chunks the window (dask's shuffle-take) so every
+    # chunk straddles two source chunks — on the regrid path that doubles the
+    # interpolation work and memory per read.
+    breaks = np.flatnonzero(np.diff(keep) != 1) + 1
+    starts = np.concatenate(([0], breaks))
+    ends = np.concatenate((breaks, [keep.size]))
+    runs = [(int(keep[s]), int(keep[e - 1]) + 1) for s, e in zip(starts, ends)]
+    if len(runs) > MAX_DEDUP_SLICES:
+        return ds.isel({time_coord: keep})
+    parts = [ds.isel({time_coord: slice(a, b)}) for a, b in runs]
+    if len(parts) == 1:
+        return parts[0]
+    return xr.concat(parts, dim=time_coord, data_vars='minimal', coords='minimal', compat='override')
 
 
 def _assemble_bct_data(output_dict: dict) -> Dict[str, Dict[str, list]]:
@@ -2106,6 +2340,18 @@ if __name__ == '__main__':
     legacy_calls = len(perf_points)
     new_calls = perf_context['stats']['strict_point_calls']
     check('strict QC call count reduced', new_calls < legacy_calls, True, tol=0)
+
+    print("\nStats-based stencil summary (strict/intertidal QC without file access):")
+    for ds_name, ds_case in (('full', ds_full), ('partial', ds_partial), ('land', ds_land)):
+        ctx = _build_qc_context(ds_case, ['wl'], preset)
+        ok = 'valid_count' in ctx['metrics']['wl']
+        for la, lo in ((0.25, 0.75), (0.0, 0.5), (0.0, 0.98), (0.5, 0.02), (1.0, 1.0), (0.3, 0.6), (1.2, 0.5)):
+            ok = ok and _inspect_stencil(la, lo, ds_case, 'wl', preset, ctx) == interp.inspect_bilinear_stencil(
+                la, lo, ds_case, 'wl', lat_coord='lat', lon_coord='lon')
+        check(f'stats stencil == disk stencil ({ds_name})', ok, True, tol=0)
+    check('stats absent -> disk stencil',
+          _inspect_stencil(0.25, 0.75, ds_full, 'wl', preset, {'metrics': {'wl': {}}})
+          == interp.inspect_bilinear_stencil(0.25, 0.75, ds_full, 'wl'), True, tol=0)
 
     print(f"\n{'=' * 50}")
     if all_pass:

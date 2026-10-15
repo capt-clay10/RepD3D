@@ -410,7 +410,7 @@ def generate_neumann_boundaries(
 
     # ── Sources (single or cross-border groups) ─────────────────────────
     groups = source_groups or [{"data_files": list(data_files or []), "preset_name": preset_name}]
-    sources = bce._build_boundary_sources(groups, "water_level", model_type, timing, logger)
+    sources = bce._build_boundary_sources(groups, "water_level", model_type, timing, logger, cancel_event=cancel_event)
     labels = [s["label"] for s in sources]
     spacing_m = _parent_grid_spacing_m(sources[0])
     span_along = float(along_span_m or PROBE_ALONG_SPAN_FACTOR * spacing_m)
@@ -544,6 +544,17 @@ def generate_neumann_boundaries(
     usable_total = max(1, sum(len(v) for v in probe_plan.values()))
     probes_done = 0
     logger.info(f"[neumann] Screening passed; extracting {usable_total} probe series...")
+    # Prefetch every probe's stencil corners per source in one pass per
+    # variable (see interpolation.CornerSeriesCache) instead of one full
+    # read of the window per probe.
+    probe_caches = [
+        bce._prefetch_corner_series(
+            src["ds"],
+            [(p["lat"], p["lon"]) for plan in probe_plan.values() for p in plan if p["source"] == src_idx],
+            src["variables"], src["preset"], logger, cancel_event,
+        )
+        for src_idx, src in enumerate(sources)
+    ]
 
     for key, sup in supports.items():
         bce._check_cancel(cancel_event)
@@ -557,6 +568,7 @@ def generate_neumann_boundaries(
                 {"lat": probe["lat"], "lon": probe["lon"], "boundaries": f"{point_label} probe"},
                 src["ds"], src["preset"].water_level_var, src["preset"],
                 src["native_minutes"], output_minutes, logger=logger,
+                cache=probe_caches[probe["source"]],
             )
             kept_offsets.append(probe["offset"])
             kept_series.append(series)
@@ -593,6 +605,8 @@ def generate_neumann_boundaries(
                 f"[neumann] {point_label}: probes span sources "
                 f"{sorted(set(probe_sources))} (cross-border fit)."
             )
+
+    probe_caches = None   # release the prefetched probe series before the section caches are built
 
     logger.info(f"[neumann] Gradient statistics [-] per support point:")
     for row in stats_rows:
@@ -771,13 +785,15 @@ def _sample_water_level_sections(
 
     series: Dict[str, Dict[str, List[float]]] = {}
     total = max(1, len(bnd_loc_geo))
+    caches = bce._prefetch_source_caches(sources, bnd_loc_geo, point_sources, logger, cancel_event)
     for idx, (_, row) in enumerate(bnd_loc_geo.iterrows()):
         bce._check_cancel(cancel_event)
         name = str(row["boundaries"])
-        src = sources[point_sources[row["boundaries"]]]
+        src_idx = point_sources[row["boundaries"]]
+        src = sources[src_idx]
         values = bce._resample_scalar_variable(
             row, src["ds"], src["preset"].water_level_var, src["preset"],
-            src["native_minutes"], output_minutes, logger=logger,
+            src["native_minutes"], output_minutes, logger=logger, cache=caches[src_idx],
         )
         series.setdefault(name[:-2], {})[name[-1]] = (
             np.asarray(values, dtype=float).tolist()

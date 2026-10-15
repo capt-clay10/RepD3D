@@ -13,6 +13,7 @@ from copy import deepcopy
 from datetime import datetime
 import importlib.machinery
 import importlib.util
+import inspect
 import io
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -151,19 +152,26 @@ def _register_intertidal_acceptance(qc_context: Dict[str, Any], lat: float, lon:
         qc_context.setdefault("_intertidal_accepts", {})[_IMPL._point_cache_key(lat, lon)] = _clone(details)
 
 
-def _check_intertidal_tolerance(lat: float, lon: float, ds, variables: List[str], preset) -> Dict[str, Any]:
+def _check_intertidal_tolerance(lat: float, lon: float, ds, variables: List[str], preset, qc_context=None) -> Dict[str, Any]:
     details: List[Dict[str, Any]] = []
+    inspect_stencil = getattr(_IMPL, "_inspect_stencil", None)
+    derived = set((qc_context or {}).get("derived_vars", ()))
     for variable in variables:
-        stencil = _IMPL.interp.inspect_bilinear_stencil(
-            lat,
-            lon,
-            ds,
-            variable=variable,
-            lat_coord=preset.lat_coord,
-            lon_coord=preset.lon_coord,
-        )
+        # Per-corner gap statistics come from the QC context's one-pass
+        # per-cell statistics (no file access); without them (or with a
+        # legacy implementation module) the stencil is read from disk.
+        if inspect_stencil is not None:
+            stencil = inspect_stencil(lat, lon, ds, variable, preset, qc_context)
+        else:
+            stencil = _IMPL.interp.inspect_bilinear_stencil(
+                lat, lon, ds, variable=variable, lat_coord=preset.lat_coord, lon_coord=preset.lon_coord,
+            )
         if stencil["outside"]:
             return {"reliable": False, "issues": ["outside dataset extent"]}
+        if variable in derived:
+            if not _derived_stencil_has_value(stencil["corners"]):
+                return {"reliable": False, "issues": [f"{variable}: {DERIVED_ISSUE}"]}
+            continue
         for corner_name, corner in stencil["corners"].items():
             weight = corner["normalized_weight"]
             if weight <= 0.0:
@@ -207,8 +215,60 @@ def _check_intertidal_tolerance(lat: float, lon: float, ds, variables: List[str]
     return {"reliable": True, "path": "intertidal", "issues": [], "details": details}
 
 
+DERIVED_ISSUE = "no source value at any timestep in any contributing corner"
+
+
+def _wave_derived_variables(preset, variables) -> Tuple[str, ...]:
+    """
+    Wave quantities that the source leaves undefined wherever there are no
+    waves: peak period and directional spreading. TrilaWatt sets them NaN
+    exactly when Hs <= 0.05 m (checked 2026-10-15 on the 2017/2018 files:
+    never while Hs > 0.1 m, and only 11 of 11639 wet cells are gap-free over
+    13 months). Applying the strict gap rules to them rejected 20 of 90 wave
+    sections for calm weather. They are QC'd for "has a value at some
+    timestep in some contributing corner" only; the calm-period gaps are
+    bridged by the mask-normalised interpolation at extraction and reported
+    in the [fill] log lines.
+    """
+    return tuple(v for v in (preset.wave_tp_var, preset.wave_dir_spread_var) if v and v in variables)
+
+
+def _log_derived_policy(logger, derived_vars) -> None:
+    if derived_vars:
+        logger.info(
+            f"[qc] {', '.join(derived_vars)}: derived wave quantities (undefined while Hs ~ 0). QC only "
+            f"requires a value at some timestep; calm-period gaps are bridged at extraction (see [fill] lines)."
+        )
+
+
+def _derived_stencil_has_value(corners: Dict[str, Dict[str, Any]]) -> bool:
+    return any(float(c["normalized_weight"]) > 0.0 and not c["all_nan"] for c in corners.values())
+
+
+def _fast_assess_derived_quality(variable: str, geometry: Dict[str, Any], masks: Dict[str, Any]) -> Dict[str, Any]:
+    """Fast-path verdict for a derived quantity: a value somewhere in the stencil suffices."""
+    any_valid_mask = masks["any_valid_mask"]
+    lat_idx1, lat_idx2 = geometry["lat_indices"]
+    lon_idx1, lon_idx2 = geometry["lon_indices"]
+    corners = {"Q11": (lat_idx1, lon_idx1), "Q12": (lat_idx1, lon_idx2), "Q21": (lat_idx2, lon_idx1), "Q22": (lat_idx2, lon_idx2)}
+    contributing = [name for name in corners if float(geometry["normalized_weights"][name]) > 0.0]
+    has_value = any(bool(any_valid_mask[corners[name]]) for name in contributing)
+    ok = has_value and not geometry["outside"]
+    return {
+        "decision": "accept" if ok else "hard_fail",
+        "issues": [] if ok else [DERIVED_ISSUE],
+        "bad_weight": 0.0 if ok else 1.0,
+        "max_bad_corner_weight": 0.0 if ok else 1.0,
+        "contributing_corner_count": len(contributing),
+        "full_valid_contributing_count": 0,
+        "all_contributing_full": False,
+    }
+
+
 def _fast_assess_variable_quality(variable: str, geometry: Dict[str, Any], qc_context: Dict[str, Any]) -> Dict[str, Any]:
     masks = qc_context["metrics"][variable]
+    if variable in qc_context.get("derived_vars", ()):
+        return _fast_assess_derived_quality(variable, geometry, masks)
     full_valid_mask = masks["full_valid_mask"]
     any_valid_mask = masks["any_valid_mask"]
     lat_idx1, lat_idx2 = geometry["lat_indices"]
@@ -336,7 +396,7 @@ def _evaluate_point_status(
             if strict["reliable"]:
                 result = {"reliable": True, "path": "strict", "assessments": strict["assessments"], "issues": []}
         if result is None and allow_intertidal:
-            intertidal = _check_intertidal_tolerance(lat, lon, ds, variables, preset)
+            intertidal = _check_intertidal_tolerance(lat, lon, ds, variables, preset, qc_context)
             if intertidal["reliable"]:
                 _register_intertidal_acceptance(qc_context, lat, lon, intertidal["details"])
                 result = {"reliable": True, "path": "intertidal", "assessments": {}, "issues": []}
@@ -606,6 +666,7 @@ def _resample_scalar_variable(
     native_minutes: _IMPL.np.ndarray,
     output_minutes: _IMPL.np.ndarray,
     logger=None,
+    cache=None,
 ) -> List[float]:
     stats: Dict[str, int] = {}
     native_series = _IMPL.interp.bilinear_interpolation(
@@ -616,12 +677,84 @@ def _resample_scalar_variable(
         lat_coord=preset.lat_coord,
         lon_coord=preset.lon_coord,
         stats=stats,
+        cache=cache,
     )
     label = _point_label(row)
     _check_plausible_range(label, variable, native_series, preset)
     if logger is not None:
         _log_fill_stats(logger, label, variable, stats)
     return _resample_linear_series(native_minutes, native_series, output_minutes).tolist()
+
+
+def _qc_context(ds, variables, preset, logger=None, cancel_event=None):
+    """
+    _IMPL._build_qc_context with the logger/cancel keywords when the
+    implementation accepts them; a legacy compiled implementation module
+    (backend_bc_extractor_impl.pyc fallback) takes the three positional
+    arguments only.
+    """
+    builder = _IMPL._build_qc_context
+    try:
+        params = inspect.signature(builder).parameters
+        accepts = "cancel_event" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+    except (TypeError, ValueError):
+        accepts = False
+    if accepts:
+        return builder(ds, variables, preset, logger=logger, cancel_event=cancel_event)
+    return builder(ds, variables, preset)
+
+
+def _sampling_points(rows) -> List[Tuple[float, float]]:
+    """(lat, lon) tuples of a boundary-location DataFrame, in extraction order."""
+    return [(float(row["lat"]), float(row["lon"])) for _, row in rows.iterrows()]
+
+
+def _prefetch_corner_series(ds, points, variables, preset, logger, cancel_event=None):
+    """
+    CornerSeriesCache for the extraction loop (see interpolation.CornerSeriesCache).
+
+    Reading each point's stencil corners one by one decompresses the whole
+    window once per corner on one-field-per-chunk files; the cache reads the
+    corner cells of all points in one pass per variable instead. Returns None
+    when there is nothing to prefetch; the loop then reads per point.
+    """
+    points = list(points)
+    variables = [v for v in dict.fromkeys(variables) if v]
+    if not points or not variables:
+        return None
+    try:
+        cache = _IMPL.interp.CornerSeriesCache(
+            ds, points, variables, preset.lat_coord, preset.lon_coord, preset.time_coord,
+            cancel_check=lambda: _IMPL._check_cancel(cancel_event), logger=logger,
+        )
+    except Exception as exc:   # an optimisation must never break an extraction
+        logger.info(f"[prefetch] Not prefetching stencil series ({exc}); reading per point instead.")
+        return None
+    if not any(cache.has(v) for v in variables):
+        logger.warning(
+            f"[prefetch] None of {', '.join(variables)} is laid out as "
+            f"({preset.time_coord}, {preset.lat_coord}, {preset.lon_coord}); reading per point instead (slow)."
+        )
+        return None
+    logger.info(
+        f"[prefetch] {len(points)} point(s) x {len(variables)} variable(s) = {cache.n_cells} stencil cell(s); "
+        f"read in {cache.n_batches} pass(es) per variable instead of {4 * len(points)} reads per variable."
+    )
+    return cache
+
+
+def _prefetch_source_caches(sources, rows, point_sources, logger, cancel_event=None):
+    """One CornerSeriesCache per source group, planned from the points that group serves."""
+    caches = []
+    for src_idx, src in enumerate(sources):
+        served = rows[rows["boundaries"].map(lambda name: point_sources.get(name) == src_idx)]
+        caches.append(
+            _prefetch_corner_series(src["ds"], _sampling_points(served), src["variables"], src["preset"], logger, cancel_event)
+            if len(served) else None
+        )
+    return caches
 
 
 def _log_progress(logger, idx: int, total: int, noun: str = "points") -> None:
@@ -691,6 +824,7 @@ def _build_boundary_sources(
     model_type: str,
     timing: Dict[str, Any],
     logger,
+    cancel_event=None,
 ) -> List[Dict[str, Any]]:
     """Open each source group and precompute its QC context and time axis."""
     if not source_groups:
@@ -714,8 +848,12 @@ def _build_boundary_sources(
         variables = _quantity_variables(preset, quantity)
         logger.info(f"[src] Opening source {label}...")
         ds = _IMPL._open_dataset(data_files, preset, timing, logger)
-        qc_context = _IMPL._build_qc_context(ds, variables, preset)
+        _IMPL._check_cancel(cancel_event)
+        qc_context = _qc_context(ds, variables, preset, logger, cancel_event)
         qc_context["_intertidal_tolerance"] = _intertidal_tolerance_enabled
+        if quantity == "waves":
+            qc_context["derived_vars"] = _wave_derived_variables(preset, variables)
+            _log_derived_policy(logger, qc_context["derived_vars"])
         if quantity == "waves":
             native_minutes = _native_time_minutes(ds, preset, timing)
         else:
@@ -1238,7 +1376,7 @@ def extract_water_level(
         )
     _IMPL._check_cancel(cancel_event)
     if multi_source:
-        sources = _build_boundary_sources(source_groups, "water_level", model_type, timing, logger)
+        sources = _build_boundary_sources(source_groups, "water_level", model_type, timing, logger, cancel_event=cancel_event)
         original_coords = {
             row["boundaries"]: (float(row["lat"]), float(row["lon"]))
             for _, row in bnd_loc_geo.iterrows()
@@ -1257,7 +1395,7 @@ def extract_water_level(
     else:
         ds = _IMPL._open_dataset(data_files, preset, timing, logger)
         _IMPL._check_cancel(cancel_event)
-        qc_context = _IMPL._build_qc_context(ds, [preset.water_level_var], preset)
+        qc_context = _qc_context(ds, [preset.water_level_var], preset, logger, cancel_event)
         bnd_loc_geo, _unused_pairs, qc_summary = _prepare_boundary_sampling(
             model_type,
             "water level",
@@ -1277,20 +1415,27 @@ def extract_water_level(
     output_minutes = _build_output_minutes(model_type, timing, timestep)
     output_time_list = output_minutes.tolist()
     logger.info(f"Extracting water level for {len(bnd_loc_geo)} boundary points...")
+    if multi_source:
+        caches = _prefetch_source_caches(sources, bnd_loc_geo, point_sources, logger, cancel_event)
+    else:
+        corner_cache = _prefetch_corner_series(
+            ds, _sampling_points(bnd_loc_geo), [preset.water_level_var], preset, logger, cancel_event
+        )
     output_dict: Dict[str, List[float]] = {}
     total_points = len(bnd_loc_geo)
     for idx, (_, row) in enumerate(bnd_loc_geo.iterrows()):
         _IMPL._check_cancel(cancel_event)
         if multi_source:
-            src = sources[point_sources[row["boundaries"]]]
+            src_idx = point_sources[row["boundaries"]]
+            src = sources[src_idx]
             output_dict[row["boundaries"]] = _resample_scalar_variable(
                 row, src["ds"], src["preset"].water_level_var, src["preset"],
-                src["native_minutes"], output_minutes, logger=logger,
+                src["native_minutes"], output_minutes, logger=logger, cache=caches[src_idx],
             )
         else:
             output_dict[row["boundaries"]] = _resample_scalar_variable(
                 row, ds, preset.water_level_var, preset, native_minutes, output_minutes,
-                logger=logger,
+                logger=logger, cache=corner_cache,
             )
         progress_callback(0.1 + 0.7 * (idx + 1) / max(1, total_points))
         _log_progress(logger, idx, total_points)
@@ -1383,7 +1528,7 @@ def extract_currents(
     )
     _IMPL._check_cancel(cancel_event)
     if multi_source:
-        sources = _build_boundary_sources(source_groups, "currents", model_type, timing, logger)
+        sources = _build_boundary_sources(source_groups, "currents", model_type, timing, logger, cancel_event=cancel_event)
         original_coords = {
             row["boundaries"]: (float(row["lat"]), float(row["lon"]))
             for _, row in bnd_loc_geo.iterrows()
@@ -1403,7 +1548,7 @@ def extract_currents(
         ds = _IMPL._open_dataset(data_files, preset, timing, logger)
         _IMPL._check_cancel(cancel_event)
         qc_vars = [preset.current_u_var, preset.current_v_var]
-        qc_context = _IMPL._build_qc_context(ds, qc_vars, preset)
+        qc_context = _qc_context(ds, qc_vars, preset, logger, cancel_event)
         bnd_loc_geo, _unused_pairs, qc_summary = _prepare_boundary_sampling(
             model_type,
             "currents",
@@ -1424,28 +1569,35 @@ def extract_currents(
     output_time_list = output_minutes.tolist()
     total_points = len(bnd_loc_geo)
     logger.info(f"Extracting currents for {total_points} boundary points...")
+    if multi_source:
+        caches = _prefetch_source_caches(sources, bnd_loc_geo, point_sources, logger, cancel_event)
+    else:
+        corner_cache = _prefetch_corner_series(
+            ds, _sampling_points(bnd_loc_geo), [preset.current_u_var, preset.current_v_var], preset, logger, cancel_event
+        )
     u_dict: Dict[str, List[float]] = {}
     v_dict: Dict[str, List[float]] = {}
     for idx, (_, row) in enumerate(bnd_loc_geo.iterrows()):
         _IMPL._check_cancel(cancel_event)
         if multi_source:
-            src = sources[point_sources[row["boundaries"]]]
+            src_idx = point_sources[row["boundaries"]]
+            src = sources[src_idx]
             u_dict[row["boundaries"]] = _resample_scalar_variable(
                 row, src["ds"], src["preset"].current_u_var, src["preset"],
-                src["native_minutes"], output_minutes, logger=logger,
+                src["native_minutes"], output_minutes, logger=logger, cache=caches[src_idx],
             )
             v_dict[row["boundaries"]] = _resample_scalar_variable(
                 row, src["ds"], src["preset"].current_v_var, src["preset"],
-                src["native_minutes"], output_minutes, logger=logger,
+                src["native_minutes"], output_minutes, logger=logger, cache=caches[src_idx],
             )
         else:
             u_dict[row["boundaries"]] = _resample_scalar_variable(
                 row, ds, preset.current_u_var, preset, native_minutes, output_minutes,
-                logger=logger,
+                logger=logger, cache=corner_cache,
             )
             v_dict[row["boundaries"]] = _resample_scalar_variable(
                 row, ds, preset.current_v_var, preset, native_minutes, output_minutes,
-                logger=logger,
+                logger=logger, cache=corner_cache,
             )
         progress_callback(0.1 + 0.7 * (idx + 1) / max(1, total_points))
         _log_progress(logger, idx, total_points)
@@ -1551,7 +1703,7 @@ def extract_salinity(
     )
     _IMPL._check_cancel(cancel_event)
     if multi_source:
-        sources = _build_boundary_sources(source_groups, "salinity", model_type, timing, logger)
+        sources = _build_boundary_sources(source_groups, "salinity", model_type, timing, logger, cancel_event=cancel_event)
         original_coords = {
             row["boundaries"]: (float(row["lat"]), float(row["lon"]))
             for _, row in bnd_loc_geo.iterrows()
@@ -1570,7 +1722,7 @@ def extract_salinity(
     else:
         ds = _IMPL._open_dataset(data_files, preset, timing, logger)
         _IMPL._check_cancel(cancel_event)
-        qc_context = _IMPL._build_qc_context(ds, [preset.salinity_var], preset)
+        qc_context = _qc_context(ds, [preset.salinity_var], preset, logger, cancel_event)
         bnd_loc_geo, _unused_pairs, qc_summary = _prepare_boundary_sampling(
             model_type,
             "salinity",
@@ -1592,18 +1744,25 @@ def extract_salinity(
     total_points = len(bnd_loc_geo)
     raw: Dict[str, List[float]] = {}
     logger.info(f"Extracting salinity for {total_points} boundary points...")
+    if multi_source:
+        caches = _prefetch_source_caches(sources, bnd_loc_geo, point_sources, logger, cancel_event)
+    else:
+        corner_cache = _prefetch_corner_series(
+            ds, _sampling_points(bnd_loc_geo), [preset.salinity_var], preset, logger, cancel_event
+        )
     for idx, (_, row) in enumerate(bnd_loc_geo.iterrows()):
         _IMPL._check_cancel(cancel_event)
         if multi_source:
-            src = sources[point_sources[row["boundaries"]]]
+            src_idx = point_sources[row["boundaries"]]
+            src = sources[src_idx]
             raw[row["boundaries"]] = _resample_scalar_variable(
                 row, src["ds"], src["preset"].salinity_var, src["preset"],
-                src["native_minutes"], output_minutes, logger=logger,
+                src["native_minutes"], output_minutes, logger=logger, cache=caches[src_idx],
             )
         else:
             raw[row["boundaries"]] = _resample_scalar_variable(
                 row, ds, preset.salinity_var, preset, native_minutes, output_minutes,
-                logger=logger,
+                logger=logger, cache=corner_cache,
             )
         progress_callback(0.1 + 0.7 * (idx + 1) / max(1, total_points))
         _log_progress(logger, idx, total_points)
@@ -1705,7 +1864,7 @@ def extract_sediments(
     )
     _IMPL._check_cancel(cancel_event)
     if multi_source:
-        sources = _build_boundary_sources(source_groups, "sediments", model_type, timing, logger)
+        sources = _build_boundary_sources(source_groups, "sediments", model_type, timing, logger, cancel_event=cancel_event)
         # Fraction metadata comes from the first built source so per-group
         # Custom overrides are honoured; _build_boundary_sources already
         # enforced an equal fraction count across groups.
@@ -1736,7 +1895,7 @@ def extract_sediments(
     else:
         ds = _IMPL._open_dataset(data_files, preset, timing, logger)
         _IMPL._check_cancel(cancel_event)
-        qc_context = _IMPL._build_qc_context(ds, unique_vars, preset)
+        qc_context = _qc_context(ds, unique_vars, preset, logger, cancel_event)
         bnd_loc_geo, _unused_pairs, qc_summary = _prepare_boundary_sampling(
             model_type,
             "sediments",
@@ -1757,6 +1916,7 @@ def extract_sediments(
     output_time_list = output_minutes.tolist()
     raw: Dict[Any, Dict[str, List[float]]] = {}
     if multi_source:
+        caches = _prefetch_source_caches(sources, bnd_loc_geo, point_sources, logger, cancel_event)
         # Fraction index keys: each source maps fraction f_idx to its own variable name.
         total_steps = max(1, n_frac * max(1, len(bnd_loc_geo)))
         step = 0
@@ -1764,11 +1924,12 @@ def extract_sediments(
             raw[f_idx] = {}
             for _, row in bnd_loc_geo.iterrows():
                 _IMPL._check_cancel(cancel_event)
-                src = sources[point_sources[row["boundaries"]]]
+                src_idx = point_sources[row["boundaries"]]
+                src = sources[src_idx]
                 var_name = src["preset"].sediment_conc_vars[f_idx]
                 raw[f_idx][row["boundaries"]] = _resample_scalar_variable(
                     row, src["ds"], var_name, src["preset"], src["native_minutes"], output_minutes,
-                    logger=logger,
+                    logger=logger, cache=caches[src_idx],
                 )
                 step += 1
                 progress_callback(0.05 + 0.75 * step / total_steps)
@@ -1777,6 +1938,9 @@ def extract_sediments(
             [s["label"] for s in sources], logger,
         )
     else:
+        corner_cache = _prefetch_corner_series(
+            ds, _sampling_points(bnd_loc_geo), unique_vars, preset, logger, cancel_event
+        )
         total_steps = max(1, len(unique_vars) * max(1, len(bnd_loc_geo)))
         step = 0
         for var_name in unique_vars:
@@ -1785,6 +1949,7 @@ def extract_sediments(
                 _IMPL._check_cancel(cancel_event)
                 raw[var_name][row["boundaries"]] = _resample_scalar_variable(
                     row, ds, var_name, preset, native_minutes, output_minutes, logger=logger,
+                    cache=corner_cache,
                 )
                 step += 1
                 progress_callback(0.05 + 0.75 * step / total_steps)
@@ -1888,7 +2053,7 @@ def extract_waves(model_type: str, model_def_path: str, boundary_path: str, grid
     bnd_loc_geo, _bnd_native, bnd_pairs = _IMPL._load_boundary_locations(model_type, boundary_path, grid_path, crs_type, utm_zone, hemisphere, logger)
     _IMPL._check_cancel(cancel_event)
     if multi_source:
-        sources = _build_boundary_sources(source_groups, "waves", model_type, timing, logger)
+        sources = _build_boundary_sources(source_groups, "waves", model_type, timing, logger, cancel_event=cancel_event)
         bnd_loc_geo, bnd_pairs, qc_summary, point_sources = _prepare_multi_source_sampling(
             model_type, "waves", sources, bnd_loc_geo, bnd_pairs, logger,
             waves_use_a_only=True, max_repair_distance_m=max_repair_distance_m,
@@ -1904,7 +2069,9 @@ def extract_waves(model_type: str, model_def_path: str, boundary_path: str, grid
             wave_qc_vars.append(preset.wave_dir_var)
         if preset.wave_dir_spread_var and not preset.wave_dir_spread_use_default:
             wave_qc_vars.append(preset.wave_dir_spread_var)
-        qc_context = _IMPL._build_qc_context(ds, wave_qc_vars, preset)
+        qc_context = _qc_context(ds, wave_qc_vars, preset, logger, cancel_event)
+        qc_context["derived_vars"] = _wave_derived_variables(preset, wave_qc_vars)
+        _log_derived_policy(logger, qc_context["derived_vars"])
         bnd_loc_geo, bnd_pairs, qc_summary = _prepare_boundary_sampling(model_type, "waves", ds, bnd_loc_geo, bnd_pairs, wave_qc_vars, preset, qc_context, logger, waves_use_a_only=True, progress_callback=lambda frac: progress_callback(0.1 * frac), cancel_event=cancel_event)
     progress_callback(0.1)
     if not multi_source:
@@ -1915,22 +2082,29 @@ def extract_waves(model_type: str, model_def_path: str, boundary_path: str, grid
         bnd_loc_a = bnd_loc_geo
     total_points = len(bnd_loc_a)
     logger.info(f"Extracting wave data for {total_points} boundary points...")
+    if multi_source:
+        caches = _prefetch_source_caches(sources, bnd_loc_a, point_sources, logger, cancel_event)
+    else:
+        corner_cache = _prefetch_corner_series(ds, _sampling_points(bnd_loc_a), wave_qc_vars, preset, logger, cancel_event)
     wave_data: Dict[str, Dict[str, List[float]]] = {}
     for idx, (_, row) in enumerate(bnd_loc_a.iterrows()):
         _IMPL._check_cancel(cancel_event)
         if multi_source:
-            src = sources[point_sources[row["boundaries"]]]
+            src_idx = point_sources[row["boundaries"]]
+            src = sources[src_idx]
             point_preset = src["preset"]
             point_ds = src["ds"]
             point_native_minutes = src["native_minutes"]
+            point_cache = caches[src_idx]
         else:
             point_preset = preset
             point_ds = ds
             point_native_minutes = native_minutes
+            point_cache = corner_cache
         hs_stats: Dict[str, int] = {}
         tp_stats: Dict[str, int] = {}
-        hs_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_hs_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, stats=hs_stats)
-        tp_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_tp_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, stats=tp_stats)
+        hs_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_hs_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, stats=hs_stats, cache=point_cache)
+        tp_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_tp_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, stats=tp_stats, cache=point_cache)
         _check_plausible_range(str(row["boundaries"]), point_preset.wave_hs_var, hs_native, point_preset)
         _check_plausible_range(str(row["boundaries"]), point_preset.wave_tp_var, tp_native, point_preset)
         _log_fill_stats(logger, str(row["boundaries"]), point_preset.wave_hs_var, hs_stats)
@@ -1940,16 +2114,18 @@ def extract_waves(model_type: str, model_def_path: str, boundary_path: str, grid
             "tp": _resample_linear_series(point_native_minutes, tp_native, output_minutes).tolist(),
         }
         if point_preset.wave_dir_format == "vector":
-            dir_x = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_x_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord)
-            dir_y = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_y_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord)
+            dir_x = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_x_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, cache=point_cache)
+            dir_y = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_y_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, cache=point_cache)
             dir_x_resampled = _resample_linear_series(point_native_minutes, dir_x, output_minutes)
             dir_y_resampled = _resample_linear_series(point_native_minutes, dir_y, output_minutes)
             point_data["dir"] = _IMPL._wave_direction_from_vectors(dir_x_resampled, dir_y_resampled).tolist()
         else:
-            dir_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord)
+            dir_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, cache=point_cache)
             point_data["dir"] = _resample_circular_degrees(point_native_minutes, dir_native, output_minutes).tolist()
         if point_preset.wave_dir_spread_var and not point_preset.wave_dir_spread_use_default:
-            spread_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_spread_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord)
+            spread_stats: Dict[str, int] = {}
+            spread_native = _IMPL.interp.bilinear_interpolation(row["lat"], row["lon"], point_ds, variable=point_preset.wave_dir_spread_var, lat_coord=point_preset.lat_coord, lon_coord=point_preset.lon_coord, stats=spread_stats, cache=point_cache)
+            _log_fill_stats(logger, str(row["boundaries"]), point_preset.wave_dir_spread_var, spread_stats)
             point_data["spread"] = _resample_linear_series(point_native_minutes, spread_native, output_minutes).tolist()
         else:
             point_data["spread"] = [point_preset.wave_dir_spread_default] * len(output_minutes)
@@ -2122,6 +2298,46 @@ if __name__ == "__main__":
     strict_only = _evaluate_point_status(0.5, 0.02, ds_tidal, ["sea_surface_height_2d"], TRILAWATT, qc_tidal_on, allow_intertidal=False)
     check("allow_intertidal=False bypasses the cached intertidal verdict", strict_only["reliable"], False)
 
+    print("\nDerived wave quantities (gaps allowed, a value somewhere required):")
+    time_d = pd.date_range("2020-01-01", periods=6, freq="h")
+    hs_d = _IMPL.np.ones((6, 2, 2))
+    tp_d = _IMPL.np.ones((6, 2, 2))
+    tp_d[1:5, :, :] = _IMPL.np.nan                      # Tp undefined 4 of 6 steps in every corner (calm weather)
+    coords_d = {"time": time_d, "lat": [0.0, 1.0], "lon": [0.0, 1.0]}
+    ds_d = xr.Dataset({"hs": (("time", "lat", "lon"), hs_d), "tp": (("time", "lat", "lon"), tp_d)}, coords=coords_d)
+    ctx_plain = _IMPL._build_qc_context(ds_d, ["hs", "tp"], TRILAWATT)
+    check("undeclared: Tp gaps fail strict QC", _evaluate_point_status(0.5, 0.5, ds_d, ["hs", "tp"], TRILAWATT, ctx_plain, allow_intertidal=False)["reliable"], False)
+    ctx_d = _IMPL._build_qc_context(ds_d, ["hs", "tp"], TRILAWATT)
+    ctx_d["derived_vars"] = ("tp",)
+    status_d = _evaluate_point_status(0.5, 0.5, ds_d, ["hs", "tp"], TRILAWATT, ctx_d, allow_intertidal=False)
+    check("derived: Tp gaps accepted on the fast path", (status_d["reliable"], status_d["path"]), (True, "fast"))
+    hs_p = hs_d.copy()
+    hs_p[0, 0, 0] = _IMPL.np.nan                        # one Hs gap -> ambiguous fast verdict -> strict path
+    ds_p = ds_d.assign(hs=(("time", "lat", "lon"), hs_p))
+    ctx_p = _IMPL._build_qc_context(ds_p, ["hs", "tp"], TRILAWATT)
+    ctx_p["derived_vars"] = ("tp",)
+    status_p = _evaluate_point_status(0.5, 0.5, ds_p, ["hs", "tp"], TRILAWATT, ctx_p, allow_intertidal=False)
+    check("derived: Tp gaps accepted on the strict path", (status_p["reliable"], status_p["path"]), (True, "strict"))
+    tp_none = _IMPL.np.full((6, 2, 2), _IMPL.np.nan)
+    ds_n = ds_d.assign(tp=(("time", "lat", "lon"), tp_none))
+    for tolerance_flag in (False, True):
+        ctx_n = _IMPL._build_qc_context(ds_n, ["hs", "tp"], TRILAWATT)
+        ctx_n["derived_vars"] = ("tp",)
+        status_n = _evaluate_point_status(0.5, 0.5, ds_n, ["hs", "tp"], TRILAWATT, ctx_n, allow_intertidal=tolerance_flag)
+        check(f"derived: Tp without any value rejected (intertidal={tolerance_flag})",
+              (status_n["reliable"], any("no source value" in issue for issue in status_n["issues"])), (False, True))
+    tp_corner = tp_none.copy()
+    tp_corner[2, 1, 1] = 5.0                            # a single value in one corner is enough
+    ds_c = ds_d.assign(tp=(("time", "lat", "lon"), tp_corner))
+    ctx_c = _IMPL._build_qc_context(ds_c, ["hs", "tp"], TRILAWATT)
+    ctx_c["derived_vars"] = ("tp",)
+    check("derived: one value in one corner accepted", _evaluate_point_status(0.5, 0.5, ds_c, ["hs", "tp"], TRILAWATT, ctx_c, allow_intertidal=False)["reliable"], True)
+    series_c = _IMPL.interp.bilinear_interpolation(0.5, 0.5, ds_c, variable="tp", lat_coord="lat", lon_coord="lon")
+    check("derived: extracted Tp has no NaN (held/bridged)", (bool(_IMPL.np.isnan(series_c).any()), float(series_c.min()), float(series_c.max())), (False, 5.0, 5.0))
+    check("wave derived variables of the TrilaWatt preset",
+          _wave_derived_variables(TRILAWATT, [TRILAWATT.wave_hs_var, TRILAWATT.wave_tp_var, TRILAWATT.wave_dir_x_var, TRILAWATT.wave_dir_y_var, TRILAWATT.wave_dir_spread_var]),
+          (TRILAWATT.wave_tp_var, TRILAWATT.wave_dir_spread_var))
+
     manual_timing = _build_manual_wave_timing("20180101", "2018-05-01 00:00", "2018-05-01 01:00")
     check("manual wave tstart", manual_timing["tstart"], 172800.0)
     check("manual wave first time value", _build_wave_time_values(manual_timing, 3, 20.0)[0], 172800.0)
@@ -2258,7 +2474,7 @@ if __name__ == "__main__":
             )
             _IMPL._check_cancel = lambda *_args, **_kwargs: None
             _IMPL.interp.bilinear_interpolation = (
-                lambda lat, lon, ds_obj, variable=None, lat_coord=None, lon_coord=None, stats=None: series_lookup[variable].copy()
+                lambda lat, lon, ds_obj, variable=None, lat_coord=None, lon_coord=None, stats=None, cache=None: series_lookup[variable].copy()
             )
             _IMPL.writer_delft3d4.write_bct = lambda *args, **kwargs: captured.update(
                 {"kind": "write_bct", "path": args[0], "boundary_data": args[1], "timing_args": args[2:6]}
