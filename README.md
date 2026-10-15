@@ -8,7 +8,7 @@
 
 ![RepD3D logo](https://github.com/user-attachments/assets/b1de47b1-be95-4b24-98d8-cc44c64f2e5a)
 
-RepD3D is a prioritizedst graphical toolbox (also runnable as plain Python) that helps coastal and estuarine modellers
+RepD3D is a prioritized graphical toolbox (also runnable as plain Python) that helps coastal and estuarine modellers
 
 * **identify statistically representative simulation periods** from long-term wind records (Soares et al., 2024),
 * **extract space- and time-varying boundary conditions** (water level, currents, waves, salinity, sediments and biogeochemistry, Neumann gradients, wind, pressure and temperature) from public hindcast and reanalysis data sets, and
