@@ -3,7 +3,8 @@
 [![GitHub release](https://img.shields.io/github/v/release/capt-clay10/RepD3D?style=for-the-badge)](https://github.com/capt-clay10/RepD3D/releases)
 [![License](https://img.shields.io/github/license/capt-clay10/RepD3D?style=for-the-badge)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.14-blue?style=for-the-badge)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23361961.svg)](https://doi.org/10.5281/zenodo.23361961)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23361961-blue?style=for-the-badge)](https://doi.org/10.5281/zenodo.23361961)
+
 
 ![RepD3D logo](https://github.com/user-attachments/assets/b1de47b1-be95-4b24-98d8-cc44c64f2e5a)
 
