@@ -509,9 +509,24 @@ def _build_wave_output_minutes(timing: Dict[str, Any], timestep: float) -> _IMPL
     return _IMPL.np.arange(tstart, tstop + step, step, dtype=float)
 
 
+def _source_times_on_model_clock(ds, preset) -> _IMPL.pd.DatetimeIndex:
+    """Source timestamps moved onto the model clock.
+
+    _open_dataset slices the source at model time + preset.time_offset_hours
+    (EasyGSH: -12 h, as v1 did), so the sliced samples still carry source-clock
+    stamps. The same offset must be undone here: the resamplers below align by
+    timestamp, so without it they cancel the correction (output 12 h early, as
+    every v2 build up to 20261015 wrote for EasyGSH) and np.interp clamps the
+    last |offset| hours of the window to the final sample.
+    """
+    time_values = _IMPL.pd.to_datetime(ds[preset.time_coord].values)
+    offset_hours = float(getattr(preset, "time_offset_hours", 0.0) or 0.0)
+    return time_values - _IMPL.pd.Timedelta(hours=offset_hours)
+
+
 def _native_time_minutes(ds, preset, timing: Dict[str, Any]) -> _IMPL.np.ndarray:
     """Convert the sliced dataset time coordinate to minutes since the reference date."""
-    time_values = _IMPL.pd.to_datetime(ds[preset.time_coord].values)
+    time_values = _source_times_on_model_clock(ds, preset)
     ref_dt = _IMPL.pd.Timestamp(timing["reference_date_iso"])
     return ((time_values - ref_dt) / _IMPL.pd.Timedelta(minutes=1)).to_numpy(dtype=float)
 
@@ -538,7 +553,7 @@ def _build_output_minutes(model_type: str, timing: Dict[str, Any], timestep: flo
 
 
 def _native_time_minutes_for_model(model_type: str, ds, preset, timing: Dict[str, Any]) -> _IMPL.np.ndarray:
-    time_values = _IMPL.pd.to_datetime(ds[preset.time_coord].values)
+    time_values = _source_times_on_model_clock(ds, preset)
     ref_dt = _time_axis_reference_datetime(model_type, timing)
     return ((time_values - ref_dt) / _IMPL.pd.Timedelta(minutes=1)).to_numpy(dtype=float)
 
@@ -2385,6 +2400,25 @@ if __name__ == "__main__":
         _IMPL._wave_direction_from_vectors(dir_x_hourly, dir_y_hourly).tolist(),
         _IMPL._wave_direction_from_vectors(_IMPL.np.array([1.0, -1.0]), _IMPL.np.array([0.0, 0.0])).tolist(),
     )
+
+    # EasyGSH -12 h: _open_dataset hands over source stamps 12 h before the model
+    # window; the native axis must land back on the model window so the sample
+    # taken at source time t - 12 h is written at model time t (v1 behaviour).
+    from presets import EASYGSH
+    offset_timing = {"reference_date_iso": "2003-01-01", "tstart": 217440.0, "tstop": 217500.0,
+                     "start_datetime": pd.Timestamp("2003-06-01 00:00"), "end_datetime": pd.Timestamp("2003-06-01 01:00")}
+    offset_ds = xr.Dataset(coords={EASYGSH.time_coord: pd.date_range("2003-05-31 12:00", periods=4, freq="20min")})
+    offset_out = _build_output_minutes("delft3d4", offset_timing, 20.0)
+    check("EasyGSH offset: native axis on the model clock (D3D4)",
+          _native_time_minutes_for_model("delft3d4", offset_ds, EASYGSH, offset_timing).tolist(), offset_out.tolist())
+    check("EasyGSH offset: native axis on the model clock (FM)",
+          _native_time_minutes_for_model("fm", offset_ds, EASYGSH, offset_timing).tolist(), [0.0, 20.0, 40.0, 60.0])
+    check("EasyGSH offset: wave native axis on the model clock",
+          _native_time_minutes(offset_ds, EASYGSH, offset_timing).tolist(), offset_out.tolist())
+    check("EasyGSH offset: series written positionally, last hour not clamped",
+          _resample_linear_series(_native_time_minutes(offset_ds, EASYGSH, offset_timing),
+                                  _IMPL.np.array([1.0, 2.0, 3.0, 4.0]), offset_out).tolist(),
+          [1.0, 2.0, 3.0, 4.0])
 
     stream = io.StringIO()
     logger = logging.getLogger("backend_bc_test")
