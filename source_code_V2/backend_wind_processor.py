@@ -147,14 +147,10 @@ def generate_wind_fields(
 
     # Load the Delft3D equidistant grid
     logger.info(f"Loading target grid: {Path(grid_mat_path).name}")
-    grid_ed = scipy.io.loadmat(grid_mat_path)
-    X = grid_ed['data']['X'][0][0][:-1, :-1]
-    Y = grid_ed['data']['Y'][0][0][:-1, :-1]
+    X, Y = _load_equidistant_grid(grid_mat_path, grid_dx, grid_dy, logger)
 
-    # Replace zeros with NaN (v1 behaviour)
-    X[X == 0] = np.nan
-    Y[Y == 0] = np.nan
-
+    # Axis 0 = rows of constant y, northern row first; axis 1 = columns, western
+    # column first. writer_meteo writes rows in this order and the header declares it.
     n_rows, n_cols = X.shape
     # Delft3D meteo grid_unit accepts only 'm' or 'degree' (Delft3D-FLOW manual
     # §B.7.1); the abbreviation 'deg' is not a valid value.
@@ -296,12 +292,10 @@ def generate_temperature_field(
 
     # Load the Delft3D equidistant grid
     logger.info(f"Loading target grid: {Path(grid_mat_path).name}")
-    grid_ed = scipy.io.loadmat(grid_mat_path)
-    X = grid_ed['data']['X'][0][0][:-1, :-1]
-    Y = grid_ed['data']['Y'][0][0][:-1, :-1]
-    X[X == 0] = np.nan
-    Y[Y == 0] = np.nan
+    X, Y = _load_equidistant_grid(grid_mat_path, grid_dx, grid_dy, logger)
 
+    # Axis 0 = rows of constant y, northern row first; axis 1 = columns, western
+    # column first. writer_meteo writes rows in this order and the header declares it.
     n_rows, n_cols = X.shape
     grid_unit = 'degree' if crs_type == 'Spherical' else 'm'
 
@@ -391,6 +385,145 @@ def _normalize_longitudes(lons: np.ndarray) -> np.ndarray:
     finite = np.isfinite(out)
     out[finite] = ((out[finite] + 180.0) % 360.0) - 180.0
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TARGET GRID ORIENTATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_equidistant_grid(
+    grid_mat_path: str,
+    grid_dx: float,
+    grid_dy: float,
+    logger: logging.Logger,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load a QuickPlot .mat grid in the array layout the meteo writers need.
+
+    writer_meteo writes array row 0 first, and the header tells Delft3D that the
+    data block holds n_rows lines of constant y, northern line first, each with
+    n_cols values running west to east (Delft3D-FLOW manual B.7.1; Delft3D-WAVE
+    manual, meteo_on_equidistant_grid: "do j = nrows,1,-1 / write (xwind(i,j),
+    i=1,ncols)"). Axis 0 must therefore run north to south and axis 1 west to east.
+
+    QuickPlot grids come in both layouts. The tutorial Delft3D_grid_6x6.mat is
+    (y north-first, x); news_cosmo_6x6.mat is (x west-first, y south-first).
+    Until 2026-11 (v1 and v2) X.shape was taken as (n_rows, n_cols) unchecked,
+    so an x-major grid was written transposed against its own header and
+    Delft3D read every value from the wrong place: a 90-degree rotation of the
+    field about the grid centre.
+    """
+    grid_ed = scipy.io.loadmat(grid_mat_path)
+    X = grid_ed['data']['X'][0][0][:-1, :-1]
+    Y = grid_ed['data']['Y'][0][0][:-1, :-1]
+
+    # Replace zeros with NaN (v1 behaviour)
+    X[X == 0] = np.nan
+    Y[Y == 0] = np.nan
+
+    name = Path(grid_mat_path).name
+    X, Y, notes = _orient_equidistant_grid(X, Y)
+    for note in notes:
+        logger.warning(f"Target grid {name}: {note}")
+    _check_equidistant_spacing(X, Y, grid_dx, grid_dy, name)
+    return X, Y
+
+
+def _grid_axis_steps(A: np.ndarray) -> Tuple[float, float]:
+    """Median finite step of A along axis 0 and along axis 1 (0.0 for a length-1 axis)."""
+    steps = []
+    for axis in (0, 1):
+        if A.shape[axis] < 2:
+            steps.append(0.0)
+            continue
+        d = np.diff(A, axis=axis)
+        d = d[np.isfinite(d)]
+        steps.append(float(np.median(d)) if d.size else 0.0)
+    return steps[0], steps[1]
+
+
+def _max_abs_finite(a: np.ndarray) -> float:
+    a = a[np.isfinite(a)]
+    return float(np.max(np.abs(a))) if a.size else 0.0
+
+
+def _orient_equidistant_grid(
+    X: np.ndarray, Y: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+    """
+    Return (X, Y, notes) with axis 0 = rows of constant y (north first) and
+    axis 1 = columns of constant x (west first). ``notes`` says what was changed.
+    Raises ValueError for grids that are not axis-aligned (rotated or
+    curvilinear): meteo_on_equidistant_grid cannot represent them.
+    """
+    notes: List[str] = []
+    dX0, dX1 = _grid_axis_steps(X)
+    dY0, dY1 = _grid_axis_steps(Y)
+    scale = max(abs(dX0), abs(dX1), abs(dY0), abs(dY1))
+    if scale == 0.0:
+        raise ValueError("Target grid has no extent: cannot determine its orientation.")
+    tol = 1e-6 * scale
+    x_along_cols = abs(dX1) > tol and abs(dX0) <= tol
+    x_along_rows = abs(dX0) > tol and abs(dX1) <= tol
+    y_along_rows = abs(dY0) > tol and abs(dY1) <= tol
+    y_along_cols = abs(dY1) > tol and abs(dY0) <= tol
+
+    if x_along_cols and y_along_rows:
+        pass
+    elif x_along_rows and y_along_cols:
+        X, Y = X.T.copy(), Y.T.copy()
+        notes.append(
+            "stored x-major (each array row is one x column); transposed to rows of "
+            "constant y as the meteo header requires. Files written from this grid "
+            "before 2026-11 are transposed against their header."
+        )
+    else:
+        raise ValueError(
+            "Target grid is not axis-aligned: x must vary along one array axis only "
+            "and y along the other. A meteo_on_equidistant_grid file cannot represent "
+            "a rotated or curvilinear grid."
+        )
+
+    if _max_abs_finite(np.diff(X, axis=0)) > tol or _max_abs_finite(np.diff(Y, axis=1)) > tol:
+        raise ValueError(
+            "Target grid is not axis-aligned: x is not constant down every column or "
+            "y is not constant along every row."
+        )
+
+    dX0, dX1 = _grid_axis_steps(X)
+    dY0, dY1 = _grid_axis_steps(Y)
+    if dX1 < 0:
+        X, Y = X[:, ::-1].copy(), Y[:, ::-1].copy()
+        notes.append("columns ran east to west; flipped so the western column is written first.")
+    if dY0 > 0:
+        X, Y = X[::-1, :].copy(), Y[::-1, :].copy()
+        notes.append("rows ran south to north; flipped so the northern row is written first.")
+    return X, Y, notes
+
+
+def _check_equidistant_spacing(
+    X: np.ndarray, Y: np.ndarray, grid_dx: float, grid_dy: float, name: str,
+) -> None:
+    """Refuse grids whose node spacing is uneven or disagrees with the header dx/dy."""
+    sx = np.diff(X, axis=1)
+    sx = sx[np.isfinite(sx)]
+    sy = -np.diff(Y, axis=0)
+    sy = sy[np.isfinite(sy)]
+    if sx.size == 0 or sy.size == 0:
+        raise ValueError(f"Target grid {name} needs at least two rows and two columns.")
+    for label, steps, entry in (('dx', sx, grid_dx), ('dy', sy, grid_dy)):
+        step = float(np.median(steps))
+        if float(np.max(np.abs(steps - step))) > 1e-3 * step:
+            raise ValueError(
+                f"Target grid {name} is not equidistant in {label[1]}: node spacing varies "
+                f"from {steps.min():g} to {steps.max():g}."
+            )
+        if abs(float(entry) - step) > 1e-3 * step:
+            raise ValueError(
+                f"Target grid {name}: node spacing {label} = {step:g} but the {label} entry "
+                f"is {float(entry):g}. Delft3D would stretch the field by "
+                f"{float(entry) / step:.3g}x. Set {label} to {step:g}."
+            )
 
 
 def _prepare_geographic_query_grid(
@@ -2591,6 +2724,56 @@ if __name__ == '__main__':
     )
     check("dedupe keeps 2 timesteps", len(deduped), 2)
     check("dedupe sorts ascending", deduped[0][0], datetime(2018, 4, 1, 0))
+
+    print("\nTarget grid orientation (meteo header order):")
+    import io as _io
+    xs = 1000.0 + 6000.0 * np.arange(4)              # 4 columns west -> east
+    ys = 5000.0 + 6000.0 * np.arange(3)              # 3 rows south -> north
+    Xstd, Ystd = np.meshgrid(xs, ys[::-1])           # (3, 4): northern row first
+    Xo, Yo, notes = _orient_equidistant_grid(Xstd.copy(), Ystd.copy())
+    check("standard layout untouched", (np.array_equal(Xo, Xstd), np.array_equal(Yo, Ystd), notes), (True, True, []))
+    Xxm, Yxm = np.meshgrid(xs, ys, indexing='ij')    # (4, 3): news_cosmo_6x6.mat layout
+    Xo, Yo, notes = _orient_equidistant_grid(Xxm.copy(), Yxm.copy())
+    check("x-major grid reoriented to header order", (np.array_equal(Xo, Xstd), np.array_equal(Yo, Ystd)), (True, True))
+    check("x-major south-first grid reported (transpose + row flip)", len(notes), 2)
+    Xo, Yo, notes = _orient_equidistant_grid(Xstd[::-1].copy(), Ystd[::-1].copy())
+    check("south-first rows flipped", (np.array_equal(Yo, Ystd), len(notes)), (True, 1))
+    ang = np.radians(10.0)
+    Xr = Xstd * np.cos(ang) - Ystd * np.sin(ang)
+    Yr = Xstd * np.sin(ang) + Ystd * np.cos(ang)
+    raised = False
+    try:
+        _orient_equidistant_grid(Xr, Yr)
+    except ValueError:
+        raised = True
+    check("rotated grid refused", raised, True)
+    raised = False
+    try:
+        _check_equidistant_spacing(Xstd, Ystd, 6000.0, 6000.0, 'self-test')
+    except ValueError:
+        raised = True
+    check("matching dx/dy accepted", raised, False)
+    raised = False
+    try:
+        _check_equidistant_spacing(Xstd, Ystd, 2000.0, 6000.0, 'self-test')
+    except ValueError:
+        raised = True
+    check("dx entry that disagrees with the grid refused", raised, True)
+    # .mat round trip with QuickPlot NaN padding, x-major layout
+    pad = lambda A: np.pad(A, ((0, 1), (0, 1)), constant_values=np.nan)
+    mat_path = os.path.join(tmp_dir, 'xmajor.mat')
+    scipy.io.savemat(mat_path, {'data': {'X': pad(Xxm), 'Y': pad(Yxm)}})
+    Xl, Yl = _load_equidistant_grid(mat_path, 6000.0, 6000.0, logging.getLogger('test'))
+    check(".mat x-major grid loads in header order", (np.array_equal(Xl, Xstd), np.array_equal(Yl, Ystd)), (True, True))
+    # Writing the northing field: first line must be the northern row, values west -> east
+    buf = _io.StringIO()
+    writer_meteo.write_grid_data(buf, Yl, Yl.shape[0], Yl.shape[1])
+    first = [float(v) for v in buf.getvalue().splitlines()[0].split()]
+    check("first written line is the northern row", first, [float(ys.max())] * len(xs))
+    buf = _io.StringIO()
+    writer_meteo.write_grid_data(buf, Xl, Xl.shape[0], Xl.shape[1])
+    first = [float(v) for v in buf.getvalue().splitlines()[0].split()]
+    check("values along a line run west to east", first, [float(v) for v in xs])
 
     shutil.rmtree(tmp_dir)
 
